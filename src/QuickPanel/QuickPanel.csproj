@@ -19,6 +19,11 @@
 
   <ItemGroup>
     <Resource Include="assets\icon.png" Condition="Exists('assets\icon.png')" />
+    <Resource Include="assets\pinyin-initials.txt" Condition="Exists('assets\pinyin-initials.txt')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="tools\es.exe" Condition="Exists('tools\es.exe')" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

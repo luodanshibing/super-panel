@@ -15,6 +15,9 @@ public sealed class AppConfig
     [JsonPropertyName("gridColumns")]
     public int GridColumns { get; set; } = 8;
 
+    [JsonPropertyName("search")]
+    public SearchConfig Search { get; set; } = new();
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -45,13 +48,31 @@ public sealed class AppConfig
         Theme ??= new ThemeConfig();
         if (string.IsNullOrWhiteSpace(Hotkey))
         {
-            Hotkey = "Ctrl+Win+Space";
+            Hotkey = "Ctrl+Alt+Space";
         }
         if (GridColumns is < 2 or > 16)
         {
             GridColumns = 8;
         }
+        Search ??= new SearchConfig();
+        if (Search.MaxResults is < 5 or > 100)
+        {
+            Search.MaxResults = 30;
+        }
     }
+}
+
+public sealed class SearchConfig
+{
+    [JsonPropertyName("everythingEnabled")]
+    public bool EverythingEnabled { get; set; } = true;
+
+    /// <summary>es.exe 路径；留空 = 自动探测（应用 tools\ → 注册表 Everything 安装目录 → 常见路径）。</summary>
+    [JsonPropertyName("esPath")]
+    public string EsPath { get; set; } = "";
+
+    [JsonPropertyName("maxResults")]
+    public int MaxResults { get; set; } = 30;
 }
 
 public sealed class ThemeConfig

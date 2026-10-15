@@ -16,6 +16,40 @@
         Deactivated="OnDeactivated"
         PreviewKeyDown="OnPreviewKeyDown">
 
+    <Window.Resources>
+        <DataTemplate x:Key="ResultRowTemplate">
+            <Border Height="46" Background="Transparent" Padding="12,4">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="34" Height="34" CornerRadius="7"
+                            Background="{DynamicResource SurfaceBrush}"
+                            VerticalAlignment="Center">
+                        <Image Source="{Binding Icon}" Width="28" Height="28"
+                               Stretch="Uniform"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}"
+                                   Foreground="{DynamicResource TextBrush}"
+                                   FontSize="14" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Subtitle}"
+                                   Foreground="{DynamicResource TextDimBrush}"
+                                   FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                    </StackPanel>
+                    <Border Grid.Column="2" VerticalAlignment="Center" CornerRadius="4"
+                            Background="{DynamicResource SurfaceBrush}" Padding="6,2">
+                        <TextBlock Text="{Binding KindText}"
+                                   Foreground="{DynamicResource TextDimBrush}" FontSize="10" />
+                    </Border>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
     <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
@@ -23,7 +57,7 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- 顶部：搜索框 + 两个明摆着的操作按钮 -->
+            <!-- 顶部：搜索框 + 操作按钮 -->
             <Border Grid.Row="0"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
@@ -35,7 +69,7 @@
                     </Grid.ColumnDefinitions>
                     <Grid Grid.Column="0">
                         <TextBlock x:Name="SearchPlaceholder"
-                                   Text="过滤磁贴（全盘搜索在 P2 接入）"
+                                   Text="搜索磁贴、已装程序、全盘文件（支持拼音首字母）"
                                    Foreground="{DynamicResource TextDimBrush}"
                                    FontSize="15"
                                    VerticalAlignment="Center"
@@ -59,11 +93,49 @@
                 </Grid>
             </Border>
 
-            <!-- 磁贴网格 -->
+            <!-- 内容区：磁贴网格（无输入时） / 搜索结果列表（输入时） -->
             <Grid Grid.Row="1" Background="Transparent">
-                <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="TileViewHost"
+                              Margin="8"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
                     <UniformGrid x:Name="TileGrid" Columns="8" />
                 </ScrollViewer>
+
+                <ListBox x:Name="ResultList"
+                         Visibility="Collapsed"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Margin="4,6"
+                         ItemTemplate="{StaticResource ResultRowTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         PreviewMouseLeftButtonUp="OnResultClick">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="2,1" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource SurfaceBrush}" />
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource SurfaceBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+
                 <TextBlock x:Name="EmptyHint"
                            Foreground="{DynamicResource TextDimBrush}"
                            FontSize="13"

@@ -20,18 +20,25 @@ public partial class PanelWindow : Window
 
     private List<TileItem> _tiles = new();
     private bool _editMode;
-    private string? _filterQuery;
+    private DateTime _lastAutoHide = DateTime.MinValue;
 
     private TileItem? _pressedTile;
     private Point _pressPos;
     private bool _dragging;
-    private DateTime _lastAutoHide = DateTime.MinValue;
 
     // 失焦自动隐藏的抑制器：右键菜单 / 对话框 / 拖拽进行中 / 编辑模式 都不隐藏
     private int _suppressHide;
     private bool _dragActive;
 
     private ContextMenu? _gridMenu;
+
+    // P2 搜索
+    private readonly ProgramIndex _programs = new();
+    private readonly DispatcherTimer _searchTimer;
+    private int _searchSeq;
+    private string? _esPath;
+    private Version? _esVersion;
+    private readonly Dictionary<string, string> _tileInitials = new();
 
     public PanelWindow(AppConfig config)
     {
@@ -48,6 +55,17 @@ public partial class PanelWindow : Window
         {
             _editMode = true; // 空面板自动进编辑模式：钉住 + 可拖入
         }
+
+        Pinyin.Init();
+
+        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); RunSearch(); };
+
+        _esPath = EverythingSearch.LocateEs(_config);
+        _esVersion = _esPath is null ? null : EverythingSearch.DetectEverythingVersion(_esPath);
+        Logger.Log($"es.exe: {_esPath ?? "未找到（全盘搜索禁用）"}; Everything 版本: {_esVersion?.ToString() ?? "未知"}");
+
+        _programs.RebuildAsync(n => Logger.Log($"program index built: {n} entries"));
 
         SourceInitialized += (_, _) => ApplyWin11WindowPolish();
         BuildGridMenu();
@@ -69,6 +87,11 @@ public partial class PanelWindow : Window
         if ((DateTime.Now - _lastAutoHide).TotalMilliseconds < 250)
         {
             return;
+        }
+
+        if (_programs.IsStale)
+        {
+            _programs.RebuildAsync(n => Logger.Log($"program index rebuilt: {n} entries"));
         }
 
         var wa = SystemParameters.WorkArea;
@@ -109,33 +132,355 @@ public partial class PanelWindow : Window
             {
                 ToggleEditMode(); // 编辑模式下 Esc = 退出编辑，不关面板
             }
+            else if (!string.IsNullOrEmpty(SearchBox.Text))
+            {
+                SearchBox.Clear(); // 有搜索词：先清搜索回到磁贴视图
+            }
             else
             {
                 _lastAutoHide = DateTime.MinValue; // Esc 是主动关闭，不算失焦
                 Hide();
             }
             e.Handled = true;
+            return;
+        }
+
+        if (ResultList.Visibility == Visibility.Visible)
+        {
+            switch (e.Key)
+            {
+                case Key.Down:
+                    MoveSelection(1);
+                    e.Handled = true;
+                    break;
+                case Key.Up:
+                    MoveSelection(-1);
+                    e.Handled = true;
+                    break;
+                case Key.Enter or Key.Return:
+                    OpenSelected();
+                    e.Handled = true;
+                    break;
+            }
         }
     }
 
     private void BeginSuppress() => _suppressHide++;
     private void EndSuppress() => _suppressHide = Math.Max(0, _suppressHide - 1);
 
-    // ---------- 渲染 ----------
+    // ---------- 搜索（P2 核心） ----------
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        var text = SearchBox.Text.Trim();
+        SearchPlaceholder.Opacity = string.IsNullOrEmpty(text) ? 1 : 0;
+        _searchTimer.Stop();
+        if (string.IsNullOrEmpty(text))
+        {
+            _searchSeq++; // 作废未决的全盘回调
+            ShowTileView();
+        }
+        else
+        {
+            _searchTimer.Start(); // 防抖 120ms 后统一搜索
+        }
+    }
+
+    private void RunSearch()
+    {
+        var q = SearchBox.Text.Trim();
+        if (q.Length == 0)
+        {
+            ShowTileView();
+            return;
+        }
+
+        _searchSeq++;
+        var seq = _searchSeq;
+
+        // ① 磁贴层（内存，瞬时）：名称或拼音首字母匹配
+        var rows = new List<ResultRow>();
+        foreach (var tile in _tiles)
+        {
+            var ini = InitialsOfTile(tile);
+            if (tile.Label.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (ini.Length > 0 && ini.Contains(q, StringComparison.OrdinalIgnoreCase)))
+            {
+                rows.Add(RowFromTile(tile));
+            }
+        }
+
+        // ② 程序层（开始菜单索引，内存）：同样支持拼音首字母
+        foreach (var program in _programs.Search(q,
+                     (name, initials) =>
+                         name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                         (initials.Length > 0 && initials.Contains(q, StringComparison.OrdinalIgnoreCase)),
+                     12))
+        {
+            if (!rows.Any(r => r.Target.Equals(program.Path, StringComparison.OrdinalIgnoreCase)))
+            {
+                rows.Add(new ResultRow
+                {
+                    Title = program.Name,
+                    Subtitle = program.Path,
+                    KindText = "程序",
+                    Target = program.Path,
+                    Icon = GetProgramIcon(program.Path),
+                });
+            }
+        }
+
+        RenderResultRows(rows);
+
+        // ③ 全盘层（Everything，异步、防抖后补充上屏）
+        if (_esPath is null || !_config.Search.EverythingEnabled)
+        {
+            return;
+        }
+        var esPath = _esPath;
+        var max = _config.Search.MaxResults;
+        var usePinyin = _esVersion is not null && _esVersion >= new Version(1, 5);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var hits = await EverythingSearch.QueryAsync(esPath, q, max,
+                    new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token);
+                if (usePinyin && hits.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
+                {
+                    try
+                    {
+                        var extra = await EverythingSearch.QueryAsync(esPath, "pinyin:" + q, max,
+                            new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token);
+                        hits.AddRange(extra.Where(h => !hits.Contains(h, StringComparer.OrdinalIgnoreCase)));
+                    }
+                    catch
+                    {
+                        // 拼音补充失败不影响主结果
+                    }
+                }
+                sw.Stop();
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (seq != _searchSeq)
+                    {
+                        return; // 已被更新的输入作废
+                    }
+                    Logger.Log($"es '{q}' {sw.ElapsedMilliseconds}ms, {hits.Count} hits");
+                    AppendFileRows(hits);
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // 超时/取消，静默
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"everything query FAILED: {ex.Message}");
+            }
+        });
+    }
+
+    private string InitialsOfTile(TileItem tile)
+    {
+        if (!_tileInitials.TryGetValue(tile.Id, out var initials))
+        {
+            initials = Pinyin.Initials(tile.Label);
+            _tileInitials[tile.Id] = initials;
+        }
+        return initials;
+    }
+
+    private ResultRow RowFromTile(TileItem tile)
+    {
+        var missing = tile.Type != "url" && !File.Exists(tile.Target) && !Directory.Exists(tile.Target);
+        return new ResultRow
+        {
+            Title = tile.Label,
+            Subtitle = missing ? "目标不存在：" + tile.Target : tile.Target,
+            KindText = "磁贴",
+            Target = tile.Target,
+            Tile = tile,
+            Icon = ResolveIcon(tile),
+        };
+    }
+
+    private ImageSource? GetProgramIcon(string lnkPath)
+    {
+        // 程序图标：按路径哈希缓存，避免每次搜索重复提取
+        uint hash = 2166136261;
+        foreach (var c in lnkPath)
+        {
+            hash = (hash ^ c) * 16777619;
+        }
+        var cacheName = "p" + hash.ToString("x8") + ".png";
+        var cachePath = Path.Combine(_iconsDir, cacheName);
+        if (File.Exists(cachePath))
+        {
+            return IconExtractor.LoadImageFile(cachePath);
+        }
+        var bmp = IconExtractor.Extract(lnkPath);
+        if (bmp is not null)
+        {
+            try { IconExtractor.SavePng(bmp, cachePath); } catch { /* 缓存失败不影响 */ }
+            return bmp;
+        }
+        return null;
+    }
+
+    private void RenderResultRows(List<ResultRow> rows)
+    {
+        TileViewHost.Visibility = Visibility.Collapsed;
+        ResultList.Visibility = Visibility.Visible;
+        EditHint.Visibility = Visibility.Collapsed;
+        ResultList.ItemsSource = rows;
+        ResultList.SelectedIndex = rows.Count > 0 ? 0 : -1;
+
+        if (rows.Count == 0)
+        {
+            EmptyHint.Text = _esPath is null
+                ? "无匹配（未找到 es.exe，全盘搜索不可用）"
+                : "无匹配——全盘结果即将出现…";
+            EmptyHint.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            EmptyHint.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void AppendFileRows(List<string> hits)
+    {
+        if (ResultList.ItemsSource is not List<ResultRow> rows)
+        {
+            return;
+        }
+        var added = new List<ResultRow>();
+        foreach (var raw in hits)
+        {
+            var isDir = raw.EndsWith("\\") || Directory.Exists(raw);
+            var path = raw.TrimEnd('\\');
+            var name = Path.GetFileName(path);
+            if (name.Length == 0)
+            {
+                continue;
+            }
+            if (rows.Any(r => r.Target.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue; // 与磁贴/程序层去重
+            }
+            var row = new ResultRow
+            {
+                Title = name,
+                Subtitle = Path.GetDirectoryName(path) ?? path,
+                KindText = isDir ? "文件夹" : "文件",
+                Target = path,
+            };
+            rows.Add(row);
+            added.Add(row);
+        }
+        if (added.Count == 0)
+        {
+            return;
+        }
+        var selectedIndex = ResultList.SelectedIndex;
+        ResultList.ItemsSource = null;
+        ResultList.ItemsSource = rows;
+        ResultList.SelectedIndex = selectedIndex >= 0 ? Math.Min(selectedIndex, rows.Count - 1) : (rows.Count > 0 ? 0 : -1);
+
+        // 图标后台提取（每行 ~1ms，不卡 UI）
+        _ = Task.Run(() =>
+        {
+            foreach (var row in added)
+            {
+                var icon = IconExtractor.Extract(row.Target);
+                if (icon is not null)
+                {
+                    var captured = row;
+                    Dispatcher.BeginInvoke(() => captured.Icon = icon);
+                }
+            }
+        });
+    }
+
+    private void MoveSelection(int delta)
+    {
+        var count = ResultList.Items.Count;
+        if (count == 0)
+        {
+            return;
+        }
+        var idx = ResultList.SelectedIndex + delta;
+        if (idx < 0) idx = 0;
+        if (idx >= count) idx = count - 1;
+        ResultList.SelectedIndex = idx;
+        ResultList.ScrollIntoView(ResultList.SelectedItem);
+    }
+
+    private void OpenSelected()
+    {
+        if (ResultList.SelectedItem is ResultRow row)
+        {
+            OpenRow(row);
+        }
+    }
+
+    private void OnResultClick(object sender, MouseButtonEventArgs e)
+    {
+        var source = e.OriginalSource as DependencyObject;
+        var item = ItemsControl.ContainerFromElement(ResultList, source) as ListBoxItem;
+        if (item?.Content is ResultRow row)
+        {
+            OpenRow(row); // 单击即打开（启动器惯例）
+        }
+    }
+
+    private void OpenRow(ResultRow row)
+    {
+        _searchSeq++;
+        if (row.Tile is not null)
+        {
+            Launch(row.Tile);
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(row.Target) { UseShellExecute = true });
+            Logger.Log($"open OK: {row.Target}");
+            Hide();
+            SearchBox.Clear();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"open FAILED: {row.Target} - {ex.Message}");
+            BeginSuppress();
+            try
+            {
+                MessageBox.Show(this, $"无法打开：{row.Target}\n\n{ex.Message}", "快捷面板");
+            }
+            finally
+            {
+                EndSuppress();
+            }
+        }
+    }
+
+    private void ShowTileView()
+    {
+        TileViewHost.Visibility = Visibility.Visible;
+        ResultList.Visibility = Visibility.Collapsed;
+        RenderTiles();
+        UpdateEditUi();
+    }
+
+    // ---------- 渲染磁贴 ----------
 
     private void RenderTiles()
     {
         TileGrid.Children.Clear();
 
-        var query = _filterQuery;
-        IEnumerable<TileItem> visible = _tiles;
-        if (!string.IsNullOrEmpty(query))
-        {
-            visible = _tiles.Where(t => t.Label.Contains(query, StringComparison.OrdinalIgnoreCase));
-        }
-        var list = visible.ToList();
-
-        foreach (var tile in list)
+        foreach (var tile in _tiles)
         {
             TileGrid.Children.Add(BuildTile(tile));
         }
@@ -145,11 +490,6 @@ public partial class PanelWindow : Window
             EmptyHint.Text = _editMode
                 ? "编辑模式（面板已钉住）：从资源管理器把软件/文件/文件夹拖进来，或点右上角 ＋"
                 : "点右上角 ＋ 添加，或点 ✎ 进入编辑模式后拖入";
-            EmptyHint.Visibility = Visibility.Visible;
-        }
-        else if (list.Count == 0)
-        {
-            EmptyHint.Text = "没有匹配的磁贴";
             EmptyHint.Visibility = Visibility.Visible;
         }
         else
@@ -384,7 +724,7 @@ public partial class PanelWindow : Window
         }
         if (added > 0)
         {
-            TilesStore.Save(_tilesPath, _tiles);
+            SaveTiles();
             Logger.Log($"added {added} tile(s) via drag-drop");
             RenderTiles();
         }
@@ -411,8 +751,14 @@ public partial class PanelWindow : Window
         _tiles.Remove(dragged);
         var targetIndex = _tiles.IndexOf(targetTile);
         _tiles.Insert(Math.Max(0, targetIndex), dragged);
-        TilesStore.Save(_tilesPath, _tiles);
+        SaveTiles();
         RenderTiles();
+    }
+
+    private void SaveTiles()
+    {
+        TilesStore.Save(_tilesPath, _tiles);
+        _tileInitials.Clear(); // 标签可能变，拼音缓存作废
     }
 
     // ---------- 拖放（从资源管理器拖入） ----------
@@ -536,7 +882,7 @@ public partial class PanelWindow : Window
             if (r is not null && !string.IsNullOrWhiteSpace(r[0]))
             {
                 tile.Label = r[0];
-                TilesStore.Save(_tilesPath, _tiles);
+                SaveTiles();
                 RenderTiles();
             }
         }
@@ -559,7 +905,7 @@ public partial class PanelWindow : Window
             if (dlg.ShowDialog(this) == true)
             {
                 tile.IconPath = dlg.FileName;
-                TilesStore.Save(_tilesPath, _tiles);
+                SaveTiles();
                 RenderTiles();
             }
         }
@@ -572,7 +918,7 @@ public partial class PanelWindow : Window
     private void DeleteTile(TileItem tile)
     {
         _tiles.Remove(tile);
-        TilesStore.Save(_tilesPath, _tiles);
+        SaveTiles();
         RenderTiles();
     }
 
@@ -633,23 +979,13 @@ public partial class PanelWindow : Window
                 target = "https://" + target;
             }
             _tiles.Add(new TileItem { Type = "url", Label = r[0], Target = target });
-            TilesStore.Save(_tilesPath, _tiles);
+            SaveTiles();
             RenderTiles();
         }
         finally
         {
             EndSuppress();
         }
-    }
-
-    // ---------- 过滤 ----------
-
-    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
-    {
-        var text = SearchBox.Text.Trim();
-        SearchPlaceholder.Opacity = string.IsNullOrEmpty(text) ? 1 : 0;
-        _filterQuery = string.IsNullOrEmpty(text) ? null : text;
-        RenderTiles();
     }
 
     // ---------- Win11 视觉 ----------
