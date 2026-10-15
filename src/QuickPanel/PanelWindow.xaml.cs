@@ -27,6 +27,12 @@ public partial class PanelWindow : Window
     private bool _dragging;
     private DateTime _lastAutoHide = DateTime.MinValue;
 
+    // 失焦自动隐藏的抑制器：右键菜单 / 对话框 / 拖拽进行中 / 编辑模式 都不隐藏
+    private int _suppressHide;
+    private bool _dragActive;
+
+    private ContextMenu? _gridMenu;
+
     public PanelWindow(AppConfig config)
     {
         InitializeComponent();
@@ -38,10 +44,15 @@ public partial class PanelWindow : Window
         _iconsDir = Path.Combine(configDir, "icons");
 
         _tiles = TilesStore.Load(_tilesPath);
+        if (_tiles.Count == 0)
+        {
+            _editMode = true; // 空面板自动进编辑模式：钉住 + 可拖入
+        }
 
         SourceInitialized += (_, _) => ApplyWin11WindowPolish();
         BuildGridMenu();
         RenderTiles();
+        UpdateEditUi();
     }
 
     // ---------- 显隐 ----------
@@ -79,6 +90,12 @@ public partial class PanelWindow : Window
 
     private void OnDeactivated(object sender, EventArgs e)
     {
+        // 这些情况下必须保持面板可见：编辑模式（拖入添加的前提）、
+        // 本面板的右键菜单 / 对话框打开中、有拖拽悬在面板上
+        if (_editMode || _suppressHide > 0 || _dragActive)
+        {
+            return;
+        }
         _lastAutoHide = DateTime.Now;
         Hide();
     }
@@ -87,11 +104,21 @@ public partial class PanelWindow : Window
     {
         if (e.Key == Key.Escape)
         {
-            _lastAutoHide = DateTime.MinValue; // Esc 是主动关闭，不算失焦
-            Hide();
+            if (_editMode)
+            {
+                ToggleEditMode(); // 编辑模式下 Esc = 退出编辑，不关面板
+            }
+            else
+            {
+                _lastAutoHide = DateTime.MinValue; // Esc 是主动关闭，不算失焦
+                Hide();
+            }
             e.Handled = true;
         }
     }
+
+    private void BeginSuppress() => _suppressHide++;
+    private void EndSuppress() => _suppressHide = Math.Max(0, _suppressHide - 1);
 
     // ---------- 渲染 ----------
 
@@ -115,8 +142,8 @@ public partial class PanelWindow : Window
         if (_tiles.Count == 0)
         {
             EmptyHint.Text = _editMode
-                ? "编辑模式：用右键菜单添加磁贴（文件/文件夹/网址）"
-                : "把程序、文件、文件夹从资源管理器拖进来即可添加";
+                ? "编辑模式（面板已钉住）：从资源管理器把软件/文件/文件夹拖进来，或点右上角 ＋"
+                : "点右上角 ＋ 添加，或点 ✎ 进入编辑模式后拖入";
             EmptyHint.Visibility = Visibility.Visible;
         }
         else if (list.Count == 0)
@@ -248,6 +275,7 @@ public partial class PanelWindow : Window
         border.Drop += (_, e) =>
         {
             e.Handled = true;
+            _dragActive = false;
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 AddFromFiles((string[])e.Data.GetData(DataFormats.FileDrop)!);
@@ -279,14 +307,9 @@ public partial class PanelWindow : Window
             }
         }
 
-        if (tile.Type == "url")
-        {
-            return null; // 网址用 🌐 字符兜底
-        }
-
         if (string.IsNullOrEmpty(tile.Target) || tile.Type == "url")
         {
-            return null;
+            return null; // 网址用 🌐 字符兜底
         }
 
         var bmp = IconExtractor.Extract(tile.Target);
@@ -331,7 +354,15 @@ public partial class PanelWindow : Window
         catch (Exception ex)
         {
             Logger.Log($"launch FAILED: {tile.Target} - {ex.Message}");
-            MessageBox.Show(this, $"无法打开：{tile.Target}\n\n{ex.Message}", "快捷面板");
+            BeginSuppress();
+            try
+            {
+                MessageBox.Show(this, $"无法打开：{tile.Target}\n\n{ex.Message}", "快捷面板");
+            }
+            finally
+            {
+                EndSuppress();
+            }
         }
     }
 
@@ -391,8 +422,11 @@ public partial class PanelWindow : Window
         e.Handled = true;
     }
 
+    private void OnWindowDragLeave(object sender, DragEventArgs e) => _dragActive = false;
+
     private void OnWindowDrop(object sender, DragEventArgs e)
     {
+        _dragActive = false;
         if (e.Data.GetDataPresent(DataFormats.FileDrop))
         {
             AddFromFiles((string[])e.Data.GetData(DataFormats.FileDrop)!);
@@ -409,6 +443,8 @@ public partial class PanelWindow : Window
         menu.Items.Add(MakeItem("添加网址…", AddUrl));
         menu.Items.Add(new Separator());
         menu.Items.Add(MakeItem(EditMenuText(), ToggleEditMode));
+        WireMenuLifetime(menu);
+        _gridMenu = menu;
         ContextMenu = menu; // 面板空白处右键
     }
 
@@ -429,7 +465,15 @@ public partial class PanelWindow : Window
             menu.Items.Add(new Separator());
             menu.Items.Add(MakeItem("退出编辑模式", ToggleEditMode));
         }
+        WireMenuLifetime(menu);
         return menu;
+    }
+
+    /// <summary>菜单弹出会抢走窗口焦点；不抑制的话失焦隐藏会把菜单和面板一起杀掉。</summary>
+    private void WireMenuLifetime(ContextMenu menu)
+    {
+        menu.Opened += (_, _) => BeginSuppress();
+        menu.Closed += (_, _) => EndSuppress();
     }
 
     private static MenuItem MakeItem(string header, Action action)
@@ -441,6 +485,21 @@ public partial class PanelWindow : Window
 
     private string EditMenuText() => _editMode ? "退出编辑模式" : "进入编辑模式";
 
+    // ---------- 顶栏按钮 ----------
+
+    private void OnAddClick(object sender, RoutedEventArgs e)
+    {
+        if (_gridMenu is null)
+        {
+            return;
+        }
+        _gridMenu.PlacementTarget = AddButton;
+        _gridMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        _gridMenu.IsOpen = true;
+    }
+
+    private void OnEditClick(object sender, RoutedEventArgs e) => ToggleEditMode();
+
     // ---------- 编辑动作 ----------
 
     private void ToggleEditMode()
@@ -448,17 +507,41 @@ public partial class PanelWindow : Window
         _editMode = !_editMode;
         BuildGridMenu(); // 菜单文案随模式变
         RenderTiles();
+        UpdateEditUi();
         Logger.Log($"edit mode = {_editMode}");
+    }
+
+    private void UpdateEditUi()
+    {
+        EditHint.Visibility = _editMode ? Visibility.Visible : Visibility.Collapsed;
+        if (_editMode)
+        {
+            EditButton.Background = (Brush)FindResource("AccentBrush");
+            EditButton.Foreground = Brushes.White;
+        }
+        else
+        {
+            EditButton.Background = Brushes.Transparent;
+            EditButton.Foreground = (Brush)FindResource("TextDimBrush");
+        }
     }
 
     private void RenameTile(TileItem tile)
     {
-        var r = PromptDialog.Show(this, "重命名磁贴", ("名称", tile.Label));
-        if (r is not null && !string.IsNullOrWhiteSpace(r[0]))
+        BeginSuppress();
+        try
         {
-            tile.Label = r[0];
-            TilesStore.Save(_tilesPath, _tiles);
-            RenderTiles();
+            var r = PromptDialog.Show(this, "重命名磁贴", ("名称", tile.Label));
+            if (r is not null && !string.IsNullOrWhiteSpace(r[0]))
+            {
+                tile.Label = r[0];
+                TilesStore.Save(_tilesPath, _tiles);
+                RenderTiles();
+            }
+        }
+        finally
+        {
+            EndSuppress();
         }
     }
 
@@ -469,11 +552,19 @@ public partial class PanelWindow : Window
             Title = "选择图标",
             Filter = "图标|*.ico;*.png|所有文件|*.*",
         };
-        if (dlg.ShowDialog(this) == true)
+        BeginSuppress();
+        try
         {
-            tile.IconPath = dlg.FileName;
-            TilesStore.Save(_tilesPath, _tiles);
-            RenderTiles();
+            if (dlg.ShowDialog(this) == true)
+            {
+                tile.IconPath = dlg.FileName;
+                TilesStore.Save(_tilesPath, _tiles);
+                RenderTiles();
+            }
+        }
+        finally
+        {
+            EndSuppress();
         }
     }
 
@@ -489,9 +580,17 @@ public partial class PanelWindow : Window
         if (kind == "folder")
         {
             var dlg = new OpenFolderDialog { Title = "选择要添加的文件夹" };
-            if (dlg.ShowDialog(this) == true)
+            BeginSuppress();
+            try
             {
-                AddFromFiles(new[] { dlg.FolderName });
+                if (dlg.ShowDialog(this) == true)
+                {
+                    AddFromFiles(new[] { dlg.FolderName });
+                }
+            }
+            finally
+            {
+                EndSuppress();
             }
             return;
         }
@@ -502,28 +601,44 @@ public partial class PanelWindow : Window
             Filter = "程序与快捷方式|*.exe;*.lnk|所有文件|*.*",
             Multiselect = true,
         };
-        if (fileDlg.ShowDialog(this) == true)
+        BeginSuppress();
+        try
         {
-            AddFromFiles(fileDlg.FileNames);
+            if (fileDlg.ShowDialog(this) == true)
+            {
+                AddFromFiles(fileDlg.FileNames);
+            }
+        }
+        finally
+        {
+            EndSuppress();
         }
     }
 
     private void AddUrl()
     {
-        var r = PromptDialog.Show(this, "添加网址", ("名称", ""), ("网址", "https://"));
-        if (r is null || string.IsNullOrWhiteSpace(r[0]) || string.IsNullOrWhiteSpace(r[1]))
+        BeginSuppress();
+        try
         {
-            return;
+            var r = PromptDialog.Show(this, "添加网址", ("名称", ""), ("网址", "https://"));
+            if (r is null || string.IsNullOrWhiteSpace(r[0]) || string.IsNullOrWhiteSpace(r[1]))
+            {
+                return;
+            }
+            var target = r[1];
+            if (!target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                target = "https://" + target;
+            }
+            _tiles.Add(new TileItem { Type = "url", Label = r[0], Target = target });
+            TilesStore.Save(_tilesPath, _tiles);
+            RenderTiles();
         }
-        var target = r[1];
-        if (!target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-            !target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        finally
         {
-            target = "https://" + target;
+            EndSuppress();
         }
-        _tiles.Add(new TileItem { Type = "url", Label = r[0], Target = target });
-        TilesStore.Save(_tilesPath, _tiles);
-        RenderTiles();
     }
 
     // ---------- 过滤 ----------

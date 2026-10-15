@@ -11,6 +11,7 @@
         Background="{DynamicResource BgBrush}"
         AllowDrop="True"
         DragOver="OnWindowDragOver"
+        DragLeave="OnWindowDragLeave"
         Drop="OnWindowDrop"
         Deactivated="OnDeactivated"
         PreviewKeyDown="OnPreviewKeyDown">
@@ -22,21 +23,39 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- 顶部搜索框：P1 先做面板内过滤，P2 接程序索引 + Everything -->
+            <!-- 顶部：搜索框 + 两个明摆着的操作按钮 -->
             <Border Grid.Row="0"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,0,1">
                 <Grid Margin="18,0">
-                    <TextBlock x:Name="SearchPlaceholder"
-                               Text="过滤面板磁贴（全盘搜索在 P2 接入）"
-                               Foreground="{DynamicResource TextDimBrush}"
-                               FontSize="15"
-                               VerticalAlignment="Center"
-                               IsHitTestVisible="False" />
-                    <TextBox x:Name="SearchBox"
-                             Style="{DynamicResource SearchBoxStyle}"
-                             TextChanged="OnSearchTextChanged" />
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Grid.Column="0">
+                        <TextBlock x:Name="SearchPlaceholder"
+                                   Text="过滤磁贴（全盘搜索在 P2 接入）"
+                                   Foreground="{DynamicResource TextDimBrush}"
+                                   FontSize="15"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False" />
+                        <TextBox x:Name="SearchBox"
+                                 Style="{DynamicResource SearchBoxStyle}"
+                                 TextChanged="OnSearchTextChanged" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <Button x:Name="AddButton"
+                                Content="＋"
+                                Style="{DynamicResource IconButtonStyle}"
+                                ToolTip="添加磁贴（文件 / 文件夹 / 网址）"
+                                Click="OnAddClick" />
+                        <Button x:Name="EditButton"
+                                Content="✎"
+                                Style="{DynamicResource IconButtonStyle}"
+                                ToolTip="编辑模式：钉住面板，拖入添加、拖拽排序"
+                                Click="OnEditClick" />
+                    </StackPanel>
                 </Grid>
             </Border>
 
@@ -46,12 +65,20 @@
                     <UniformGrid x:Name="TileGrid" Columns="8" />
                 </ScrollViewer>
                 <TextBlock x:Name="EmptyHint"
-                           Text="把程序、文件、文件夹从资源管理器拖进来即可添加"
                            Foreground="{DynamicResource TextDimBrush}"
                            FontSize="13"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            IsHitTestVisible="False" />
+                <TextBlock x:Name="EditHint"
+                           Text="编辑模式：面板已钉住（点别处不关）· 从资源管理器拖入添加 · 拖拽排序 · 右键改名/换图标/删除 · Esc 或 ✎ 退出"
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontSize="11"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Bottom"
+                           Margin="0,0,0,8"
+                           IsHitTestVisible="False"
+                           Visibility="Collapsed" />
             </Grid>
         </Grid>
     </Border>
