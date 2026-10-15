@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>QuickPanel</RootNamespace>
+    <AssemblyName>QuickPanel</AssemblyName>
+    <Version>0.1.0</Version>
+    <AssemblyTitle>快捷面板</AssemblyTitle>
+    <Product>QuickPanel</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="assets\icon.png" Condition="Exists('assets\icon.png')" />
+  </ItemGroup>
+
+</Project>

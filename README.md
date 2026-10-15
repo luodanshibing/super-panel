@@ -4,22 +4,27 @@
 
 ## 状态
 
-进行中 —— 调研与方案已交付（2026-10-15），**四项已拍板**：① 直接自研；② 技术栈 = WPF / .NET 8；③ 接受安装 Everything 常驻作全盘后端；④ 拼音首字母搜索要做。等用户发令后启动 P0，代码未开工。
+进行中 —— 方案已拍板（2026-10-15），P0 骨架已交付并运行（当晚）；等用户实测热键与观感、终选热键，然后启动 P1。
 
 ## 入口
 
 - 方案正文：`outputs\快捷启动面板-调研与方案-2026-10-15-2121.md`
 - 已拍板（2026-10-15 晚）：直接自研 / WPF(.NET 8) / 装 Everything 作全盘后端 / 拼音首字母搜索要做
+- P0 测试版 exe：`src\QuickPanel\bin\Release\net8.0-windows\win-x64\publish\QuickPanel.exe`（单文件、框架依赖；托盘左键 = 呼出面板）
+- 配置：exe 旁 `config\config.json`（明暗 mode：dark/light/auto、accentColor 强调色、hotkey 热键、gridColumns 列数）
+- 日志：exe 旁 `logs\p0.log`（热键注册结果、面板弹出耗时）
+- 开发：`dotnet build src\QuickPanel -c Release`；发布：`dotnet publish src\QuickPanel -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true`
 
 ## 目录
 
 | 目录 | 内容 |
 |---|---|
 | `outputs\` | 调研与方案文档 |
-| `src\` | （拍板后创建）面板程序源码 |
+| `src\` | C# WPF 源码（`src\QuickPanel\`，.NET 8） |
 
 ## 备注
 
-- 推荐组合：WPF（.NET 8 单文件）+ Everything 全盘搜索后端 + 便携 JSON 配置。
-- Listary 无公开 SDK，不可作集成后端（方案 §2.2 有出处）。
-- 性能验收指标见方案 §4.6，交付时须附实测数字。
+- 热键：用户原选 Ctrl+Win+Space 实测被系统占用（RegisterHotKey 失败）；真机扫描 18 组合，空闲清单见 ACTIVE.md T7。测试版临时 = Ctrl+Alt+Space，终选待定。
+- 内存实测（P0，空载）：私有 49.2MB / 工作集 100MB；验收口径拟定为「私有 ≤60MB」，P3 复核。
+- Listary 无公开 SDK，不可作集成后端（方案 §2.2 有出处）；性能验收指标见方案 §4.6，交付时须附实测数字。
+- 依赖：Hardcodet.NotifyIcon.Wpf 2.0.1（托盘图标）；.NET 8 桌面运行时（本机已有 8.0.10）。
