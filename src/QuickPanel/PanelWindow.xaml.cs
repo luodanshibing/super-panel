@@ -76,6 +76,7 @@ public partial class PanelWindow : Window
         Top = wa.Top + (wa.Height - Height) / 3;
 
         _showSw.Restart();
+        SearchBox.Clear(); // 每次呼出都清空上次搜索，避免残留过滤状态（用户 2026-10-15 反馈）
         Show();
         Activate();
         SearchBox.Focus();
