@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -6,13 +7,24 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Win32;
 
 namespace QuickPanel;
 
 public partial class PanelWindow : Window
 {
     private readonly AppConfig _config;
-    private readonly Stopwatch _showSw = new();
+    private readonly string _tilesPath;
+    private readonly string _iconsDir;
+    private readonly System.Diagnostics.Stopwatch _showSw = new();
+
+    private List<TileItem> _tiles = new();
+    private bool _editMode;
+    private string? _filterQuery;
+
+    private TileItem? _pressedTile;
+    private Point _pressPos;
+    private bool _dragging;
     private DateTime _lastAutoHide = DateTime.MinValue;
 
     public PanelWindow(AppConfig config)
@@ -20,9 +32,19 @@ public partial class PanelWindow : Window
         InitializeComponent();
         _config = config;
         TileGrid.Columns = Math.Clamp(config.GridColumns, 2, 16);
+
+        var configDir = Path.Combine(AppContext.BaseDirectory, "config");
+        _tilesPath = Path.Combine(configDir, "tiles.json");
+        _iconsDir = Path.Combine(configDir, "icons");
+
+        _tiles = TilesStore.Load(_tilesPath);
+
         SourceInitialized += (_, _) => ApplyWin11WindowPolish();
-        BuildSampleTiles();
+        BuildGridMenu();
+        RenderTiles();
     }
+
+    // ---------- 显隐 ----------
 
     public void ToggleShow()
     {
@@ -71,12 +93,451 @@ public partial class PanelWindow : Window
         }
     }
 
-    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    // ---------- 渲染 ----------
+
+    private void RenderTiles()
     {
-        SearchPlaceholder.Opacity = string.IsNullOrEmpty(SearchBox.Text) ? 1 : 0;
+        TileGrid.Children.Clear();
+
+        var query = _filterQuery;
+        IEnumerable<TileItem> visible = _tiles;
+        if (!string.IsNullOrEmpty(query))
+        {
+            visible = _tiles.Where(t => t.Label.Contains(query, StringComparison.OrdinalIgnoreCase));
+        }
+        var list = visible.ToList();
+
+        foreach (var tile in list)
+        {
+            TileGrid.Children.Add(BuildTile(tile));
+        }
+
+        if (_tiles.Count == 0)
+        {
+            EmptyHint.Text = _editMode
+                ? "编辑模式：用右键菜单添加磁贴（文件/文件夹/网址）"
+                : "把程序、文件、文件夹从资源管理器拖进来即可添加";
+            EmptyHint.Visibility = Visibility.Visible;
+        }
+        else if (list.Count == 0)
+        {
+            EmptyHint.Text = "没有匹配的磁贴";
+            EmptyHint.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            EmptyHint.Visibility = Visibility.Collapsed;
+        }
     }
 
-    // Win11：原生圆角 + 暗色边框（无透明开销）
+    private Border BuildTile(TileItem tile)
+    {
+        var border = new Border { Style = (Style)FindResource("TileBorderStyle"), Tag = tile };
+
+        if (_editMode)
+        {
+            border.BorderBrush = (Brush)FindResource("AccentBrush");
+            border.BorderThickness = new Thickness(2);
+        }
+
+        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+
+        // 图标区：优先自定义图标 > 图标缓存 > 提取 > 字符兜底
+        var iconSource = ResolveIcon(tile);
+        FrameworkElement iconPart;
+        if (iconSource is not null)
+        {
+            iconPart = new Image
+            {
+                Source = iconSource,
+                Width = 38,
+                Height = 38,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+        else
+        {
+            iconPart = new TextBlock
+            {
+                Text = tile.Type == "url" ? "🌐" : "⚪",
+                FontSize = 20,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+
+        var iconBox = new Border
+        {
+            Width = 38,
+            Height = 38,
+            CornerRadius = new CornerRadius(9),
+            Background = iconSource is null ? (Brush)FindResource("AccentBrush") : Brushes.Transparent,
+            Opacity = iconSource is null ? 0.92 : 1,
+            Child = iconPart,
+        };
+
+        var text = new TextBlock
+        {
+            Text = tile.Label,
+            FontSize = 11,
+            Foreground = (Brush)FindResource("TextDimBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 6, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 62,
+        };
+
+        stack.Children.Add(iconBox);
+        stack.Children.Add(text);
+        border.Child = stack;
+
+        // 目标丢失：整块变暗提示
+        var missing = tile.Type != "url" && !File.Exists(tile.Target) && !Directory.Exists(tile.Target);
+        if (missing)
+        {
+            border.Opacity = 0.45;
+            text.Text = tile.Label + "（目标不存在）";
+        }
+        border.ToolTip = missing ? $"目标不存在：{tile.Target}" : tile.Target;
+
+        // 交互：普通模式点击启动 + 支持拖拽排序；编辑模式靠右键菜单
+        if (!_editMode)
+        {
+            border.MouseLeftButtonDown += (_, e) =>
+            {
+                _pressedTile = tile;
+                _pressPos = e.GetPosition(this);
+            };
+            border.MouseMove += (_, e) =>
+            {
+                if (_pressedTile != tile || e.LeftButton != MouseButtonState.Pressed)
+                {
+                    return;
+                }
+                var pos = e.GetPosition(this);
+                if (Math.Abs(pos.X - _pressPos.X) < 8 && Math.Abs(pos.Y - _pressPos.Y) < 8)
+                {
+                    return;
+                }
+                _dragging = true;
+                _pressedTile = null;
+                var data = new DataObject("QuickPanelTileId", tile.Id);
+                DragDrop.DoDragDrop(border, data, DragDropEffects.Move);
+                _dragging = false;
+            };
+            border.MouseLeftButtonUp += (_, _) =>
+            {
+                if (!_dragging && _pressedTile == tile)
+                {
+                    Launch(tile);
+                }
+                _pressedTile = null;
+            };
+        }
+
+        border.AllowDrop = true;
+        border.DragOver += (_, e) =>
+        {
+            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("QuickPanelTileId")
+                ? DragDropEffects.Copy
+                : DragDropEffects.None;
+            e.Handled = true;
+        };
+        border.Drop += (_, e) =>
+        {
+            e.Handled = true;
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                AddFromFiles((string[])e.Data.GetData(DataFormats.FileDrop)!);
+                return;
+            }
+            if (e.Data.GetDataPresent("QuickPanelTileId"))
+            {
+                Reorder((string)e.Data.GetData("QuickPanelTileId")!, tile);
+            }
+        };
+
+        border.ContextMenu = BuildTileMenu(tile);
+        return border;
+    }
+
+    private ImageSource? ResolveIcon(TileItem tile)
+    {
+        if (!string.IsNullOrEmpty(tile.IconPath))
+        {
+            return IconExtractor.LoadImageFile(tile.IconPath);
+        }
+
+        if (!string.IsNullOrEmpty(tile.IconCache))
+        {
+            var cachePath = Path.Combine(_iconsDir, tile.IconCache);
+            if (File.Exists(cachePath))
+            {
+                return IconExtractor.LoadImageFile(cachePath);
+            }
+        }
+
+        if (tile.Type == "url")
+        {
+            return null; // 网址用 🌐 字符兜底
+        }
+
+        if (string.IsNullOrEmpty(tile.Target) || tile.Type == "url")
+        {
+            return null;
+        }
+
+        var bmp = IconExtractor.Extract(tile.Target);
+        if (bmp is not null)
+        {
+            try
+            {
+                tile.IconCache = tile.Id + ".png";
+                IconExtractor.SavePng(bmp, Path.Combine(_iconsDir, tile.IconCache));
+            }
+            catch
+            {
+                // 缓存写失败不影响显示
+            }
+        }
+        return bmp;
+    }
+
+    // ---------- 启动 ----------
+
+    private void Launch(TileItem tile)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(tile.Target)
+            {
+                UseShellExecute = true,
+            };
+            if (!string.IsNullOrEmpty(tile.Arguments))
+            {
+                psi.Arguments = tile.Arguments;
+            }
+            if (!string.IsNullOrEmpty(tile.WorkDir))
+            {
+                psi.WorkingDirectory = tile.WorkDir;
+            }
+            Process.Start(psi);
+            Logger.Log($"launch OK: {tile.Label} -> {tile.Target}");
+            Hide();
+            SearchBox.Clear();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"launch FAILED: {tile.Target} - {ex.Message}");
+            MessageBox.Show(this, $"无法打开：{tile.Target}\n\n{ex.Message}", "快捷面板");
+        }
+    }
+
+    // ---------- 添加 / 排序 / 删除 ----------
+
+    private void AddFromFiles(string[] paths)
+    {
+        var added = 0;
+        foreach (var p in paths)
+        {
+            if (string.IsNullOrWhiteSpace(p))
+            {
+                continue;
+            }
+            var tile = TileFromPath(p);
+            _tiles.Add(tile);
+            added++;
+        }
+        if (added > 0)
+        {
+            TilesStore.Save(_tilesPath, _tiles);
+            Logger.Log($"added {added} tile(s) via drag-drop");
+            RenderTiles();
+        }
+    }
+
+    private static TileItem TileFromPath(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        var type = Directory.Exists(path) ? "folder"
+            : ext is ".lnk" or ".exe" ? "app"
+            : ext == ".url" ? "url"
+            : "file";
+        var label = type == "folder" ? Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar)) : Path.GetFileNameWithoutExtension(path);
+        return new TileItem { Type = type, Label = label, Target = path };
+    }
+
+    private void Reorder(string draggedId, TileItem targetTile)
+    {
+        var dragged = _tiles.FirstOrDefault(t => t.Id == draggedId);
+        if (dragged is null || dragged.Id == targetTile.Id)
+        {
+            return;
+        }
+        _tiles.Remove(dragged);
+        var targetIndex = _tiles.IndexOf(targetTile);
+        _tiles.Insert(Math.Max(0, targetIndex), dragged);
+        TilesStore.Save(_tilesPath, _tiles);
+        RenderTiles();
+    }
+
+    // ---------- 拖放（从资源管理器拖入） ----------
+
+    private void OnWindowDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnWindowDrop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            AddFromFiles((string[])e.Data.GetData(DataFormats.FileDrop)!);
+        }
+    }
+
+    // ---------- 右键菜单 ----------
+
+    private void BuildGridMenu()
+    {
+        var menu = new ContextMenu();
+        menu.Items.Add(MakeItem("添加文件…", () => AddViaDialogs("file")));
+        menu.Items.Add(MakeItem("添加文件夹…", () => AddViaDialogs("folder")));
+        menu.Items.Add(MakeItem("添加网址…", AddUrl));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(MakeItem(EditMenuText(), ToggleEditMode));
+        ContextMenu = menu; // 面板空白处右键
+    }
+
+    private ContextMenu BuildTileMenu(TileItem tile)
+    {
+        var menu = new ContextMenu();
+        if (!_editMode)
+        {
+            menu.Items.Add(MakeItem("打开", () => Launch(tile)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(MakeItem("进入编辑模式", ToggleEditMode));
+        }
+        else
+        {
+            menu.Items.Add(MakeItem("重命名…", () => RenameTile(tile)));
+            menu.Items.Add(MakeItem("更换图标…", () => ChangeIcon(tile)));
+            menu.Items.Add(MakeItem("删除", () => DeleteTile(tile)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(MakeItem("退出编辑模式", ToggleEditMode));
+        }
+        return menu;
+    }
+
+    private static MenuItem MakeItem(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private string EditMenuText() => _editMode ? "退出编辑模式" : "进入编辑模式";
+
+    // ---------- 编辑动作 ----------
+
+    private void ToggleEditMode()
+    {
+        _editMode = !_editMode;
+        BuildGridMenu(); // 菜单文案随模式变
+        RenderTiles();
+        Logger.Log($"edit mode = {_editMode}");
+    }
+
+    private void RenameTile(TileItem tile)
+    {
+        var r = PromptDialog.Show(this, "重命名磁贴", ("名称", tile.Label));
+        if (r is not null && !string.IsNullOrWhiteSpace(r[0]))
+        {
+            tile.Label = r[0];
+            TilesStore.Save(_tilesPath, _tiles);
+            RenderTiles();
+        }
+    }
+
+    private void ChangeIcon(TileItem tile)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "选择图标",
+            Filter = "图标|*.ico;*.png|所有文件|*.*",
+        };
+        if (dlg.ShowDialog(this) == true)
+        {
+            tile.IconPath = dlg.FileName;
+            TilesStore.Save(_tilesPath, _tiles);
+            RenderTiles();
+        }
+    }
+
+    private void DeleteTile(TileItem tile)
+    {
+        _tiles.Remove(tile);
+        TilesStore.Save(_tilesPath, _tiles);
+        RenderTiles();
+    }
+
+    private void AddViaDialogs(string kind)
+    {
+        if (kind == "folder")
+        {
+            var dlg = new OpenFolderDialog { Title = "选择要添加的文件夹" };
+            if (dlg.ShowDialog(this) == true)
+            {
+                AddFromFiles(new[] { dlg.FolderName });
+            }
+            return;
+        }
+
+        var fileDlg = new OpenFileDialog
+        {
+            Title = "选择要添加的程序或文件",
+            Filter = "程序与快捷方式|*.exe;*.lnk|所有文件|*.*",
+            Multiselect = true,
+        };
+        if (fileDlg.ShowDialog(this) == true)
+        {
+            AddFromFiles(fileDlg.FileNames);
+        }
+    }
+
+    private void AddUrl()
+    {
+        var r = PromptDialog.Show(this, "添加网址", ("名称", ""), ("网址", "https://"));
+        if (r is null || string.IsNullOrWhiteSpace(r[0]) || string.IsNullOrWhiteSpace(r[1]))
+        {
+            return;
+        }
+        var target = r[1];
+        if (!target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            target = "https://" + target;
+        }
+        _tiles.Add(new TileItem { Type = "url", Label = r[0], Target = target });
+        TilesStore.Save(_tilesPath, _tiles);
+        RenderTiles();
+    }
+
+    // ---------- 过滤 ----------
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        var text = SearchBox.Text.Trim();
+        SearchPlaceholder.Opacity = string.IsNullOrEmpty(text) ? 1 : 0;
+        _filterQuery = string.IsNullOrEmpty(text) ? null : text;
+        RenderTiles();
+    }
+
+    // ---------- Win11 视觉 ----------
+
     [DllImport("dwmapi.dll")]
     private static extern void DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
@@ -93,58 +554,6 @@ public partial class PanelWindow : Window
         catch
         {
             // 非 Win11 环境忽略，不影响功能
-        }
-    }
-
-    // P0 示例磁贴：只验证等大网格 + 细边框 + 主题观感；P1 换成真实条目
-    private void BuildSampleTiles()
-    {
-        var samples = new (string Glyph, string Label)[]
-        {
-            ("📁", "文件夹"),
-            ("🌐", "Edge"),
-            ("📝", "记事本"),
-            ("📷", "Snipaste"),
-            ("📚", "Obsidian"),
-            ("⚙️", "设置"),
-        };
-
-        foreach (var (glyph, label) in samples)
-        {
-            var tile = new Border { Style = (Style)FindResource("TileBorderStyle") };
-            var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-
-            var iconBox = new Border
-            {
-                Width = 38,
-                Height = 38,
-                CornerRadius = new CornerRadius(9),
-                Background = (Brush)FindResource("AccentBrush"),
-                Opacity = 0.92,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            iconBox.Child = new TextBlock
-            {
-                Text = glyph,
-                FontSize = 20,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-
-            var text = new TextBlock
-            {
-                Text = label,
-                FontSize = 11,
-                Foreground = (Brush)FindResource("TextDimBrush"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-
-            stack.Children.Add(iconBox);
-            stack.Children.Add(text);
-            tile.Child = stack;
-            TileGrid.Children.Add(tile);
         }
     }
 }

@@ -9,6 +9,9 @@
         ShowActivated="True"
         Topmost="True"
         Background="{DynamicResource BgBrush}"
+        AllowDrop="True"
+        DragOver="OnWindowDragOver"
+        Drop="OnWindowDrop"
         Deactivated="OnDeactivated"
         PreviewKeyDown="OnPreviewKeyDown">
 
@@ -19,14 +22,14 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- 顶部搜索框（P2 接入真实搜索） -->
+            <!-- 顶部搜索框：P1 先做面板内过滤，P2 接程序索引 + Everything -->
             <Border Grid.Row="0"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,0,1">
                 <Grid Margin="18,0">
                     <TextBlock x:Name="SearchPlaceholder"
-                               Text="搜索应用、文件、文件夹（P2 接入）"
+                               Text="过滤面板磁贴（全盘搜索在 P2 接入）"
                                Foreground="{DynamicResource TextDimBrush}"
                                FontSize="15"
                                VerticalAlignment="Center"
@@ -37,17 +40,18 @@
                 </Grid>
             </Border>
 
-            <!-- 磁贴网格（P0 为示例数据，P1 接入真实条目） -->
-            <Grid Grid.Row="1">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="8">
+            <!-- 磁贴网格 -->
+            <Grid Grid.Row="1" Background="Transparent">
+                <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <UniformGrid x:Name="TileGrid" Columns="8" />
                 </ScrollViewer>
-                <TextBlock Text="P0 骨架版 · 示例磁贴仅看观感"
+                <TextBlock x:Name="EmptyHint"
+                           Text="把程序、文件、文件夹从资源管理器拖进来即可添加"
                            Foreground="{DynamicResource TextDimBrush}"
-                           FontSize="11"
+                           FontSize="13"
                            HorizontalAlignment="Center"
-                           VerticalAlignment="Bottom"
-                           Margin="0,0,0,8" />
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False" />
             </Grid>
         </Grid>
     </Border>

@@ -10,7 +10,7 @@ public sealed class AppConfig
     public ThemeConfig Theme { get; set; } = new();
 
     [JsonPropertyName("hotkey")]
-    public string Hotkey { get; set; } = "Ctrl+Win+Space";
+    public string Hotkey { get; set; } = "Ctrl+Alt+Space";
 
     [JsonPropertyName("gridColumns")]
     public int GridColumns { get; set; } = 8;
