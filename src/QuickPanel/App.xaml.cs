@@ -16,6 +16,7 @@ public partial class App : Application
     private TaskbarIcon? _tray;
     private HotkeyManager? _hotkey;
     private PanelWindow? _panel;
+    private SettingsWindow? _settings;
     private AppConfig _config = new();
 
     protected override void OnStartup(StartupEventArgs e)
@@ -69,9 +70,12 @@ public partial class App : Application
         var menu = new ContextMenu();
         var open = new MenuItem { Header = "打开面板" };
         open.Click += (_, _) => _panel?.ToggleShow();
+        var settings = new MenuItem { Header = "设置…" };
+        settings.Click += (_, _) => OpenSettings();
         var exit = new MenuItem { Header = "退出" };
         exit.Click += (_, _) => Shutdown();
         menu.Items.Add(open);
+        menu.Items.Add(settings);
         menu.Items.Add(exit);
         icon.ContextMenu = menu;
 
@@ -89,6 +93,48 @@ public partial class App : Application
         {
             return null;
         }
+    }
+
+    internal void OpenSettings()
+    {
+        if (_settings is { IsLoaded: true })
+        {
+            _settings.Activate();
+            return;
+        }
+        var configDir = Path.Combine(AppContext.BaseDirectory, "config");
+        var dataDir = string.IsNullOrWhiteSpace(_config.DataDir) ? configDir : _config.DataDir;
+        _settings = new SettingsWindow(_config, Path.Combine(dataDir, "tiles.json"), Path.Combine(dataDir, "icons"));
+        _settings.Show();
+    }
+
+    internal bool ChangeHotkey(string combo)
+    {
+        try
+        {
+            HotkeyManager.ParseCombo(combo);
+        }
+        catch
+        {
+            return false; // 格式不合法
+        }
+        _hotkey?.Dispose();
+        _hotkey = new HotkeyManager();
+        if (_hotkey.Register(combo))
+        {
+            _config.Hotkey = combo;
+            _config.Save();
+            Logger.Log($"hotkey changed to: {combo}");
+            return true;
+        }
+        _hotkey.Register(_config.Hotkey); // 回退原热键
+        Logger.Log($"hotkey change FAILED ({combo}), reverted to {_config.Hotkey}");
+        return false;
+    }
+
+    internal void ApplyGridColumns(int columns)
+    {
+        _panel?.UpdateColumns(columns);
     }
 
     protected override void OnExit(ExitEventArgs e)

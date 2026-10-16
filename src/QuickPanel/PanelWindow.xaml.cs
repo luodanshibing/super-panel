@@ -47,8 +47,9 @@ public partial class PanelWindow : Window
         TileGrid.Columns = Math.Clamp(config.GridColumns, 2, 16);
 
         var configDir = Path.Combine(AppContext.BaseDirectory, "config");
-        _tilesPath = Path.Combine(configDir, "tiles.json");
-        _iconsDir = Path.Combine(configDir, "icons");
+        var dataDir = string.IsNullOrWhiteSpace(config.DataDir) ? configDir : config.DataDir;
+        _tilesPath = Path.Combine(dataDir, "tiles.json");
+        _iconsDir = Path.Combine(dataDir, "icons");
 
         _tiles = TilesStore.Load(_tilesPath);
         if (_tiles.Count == 0)
@@ -79,7 +80,7 @@ public partial class PanelWindow : Window
     {
         if (IsVisible)
         {
-            Hide();
+            HidePanel();
             return;
         }
 
@@ -94,9 +95,20 @@ public partial class PanelWindow : Window
             _programs.RebuildAsync(n => Logger.Log($"program index rebuilt: {n} entries"));
         }
 
-        var wa = SystemParameters.WorkArea;
-        Left = wa.Left + (wa.Width - Width) / 2;
-        Top = wa.Top + (wa.Height - Height) / 3;
+        // 位置：优先恢复上次位置（有效性检查防拔掉显示器后飘出屏幕）；否则弹在鼠标所在屏幕
+        var (waL, waT, waW, waH) = GetWorkAreaNearCursor();
+        var savedLeft = _config.Window?.Left;
+        var savedTop = _config.Window?.Top;
+        if (savedLeft.HasValue && savedTop.HasValue && IsWithinVirtualScreen(savedLeft.Value, savedTop.Value))
+        {
+            Left = savedLeft.Value;
+            Top = savedTop.Value;
+        }
+        else
+        {
+            Left = waL + (waW - Width) / 2;
+            Top = waT + (waH - Height) / 3;
+        }
 
         _showSw.Restart();
         SearchBox.Clear(); // 每次呼出都清空上次搜索，避免残留过滤状态（用户 2026-10-15 反馈）
@@ -121,7 +133,7 @@ public partial class PanelWindow : Window
             return;
         }
         _lastAutoHide = DateTime.Now;
-        Hide();
+        HidePanel();
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -139,7 +151,7 @@ public partial class PanelWindow : Window
             else
             {
                 _lastAutoHide = DateTime.MinValue; // Esc 是主动关闭，不算失焦
-                Hide();
+                HidePanel();
             }
             e.Handled = true;
             return;
@@ -448,7 +460,7 @@ public partial class PanelWindow : Window
         {
             Process.Start(new ProcessStartInfo(row.Target) { UseShellExecute = true });
             Logger.Log($"open OK: {row.Target}");
-            Hide();
+            HidePanel();
             SearchBox.Clear();
         }
         catch (Exception ex)
@@ -689,7 +701,7 @@ public partial class PanelWindow : Window
             }
             Process.Start(psi);
             Logger.Log($"launch OK: {tile.Label} -> {tile.Target}");
-            Hide();
+            HidePanel();
             SearchBox.Clear();
         }
         catch (Exception ex)
@@ -986,6 +998,111 @@ public partial class PanelWindow : Window
         {
             EndSuppress();
         }
+    }
+
+    // ---------- 隐藏 / 位置 / 设置入口（P3） ----------
+
+    /// <summary>统一隐藏出口：记位置 → 隐藏 → 作废未决搜索 → 延迟 GC 压回闲置内存。</summary>
+    private void HidePanel()
+    {
+        if (!IsVisible)
+        {
+            return;
+        }
+        _config.Window = new WindowConfig { Left = Left, Top = Top };
+        _config.Save();
+        Hide();
+        _searchSeq++;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(1500);
+                GC.Collect(2, GCCollectionMode.Optimized, false);
+            }
+            catch
+            {
+                // GC 失败无碍
+            }
+        });
+    }
+
+    public void UpdateColumns(int columns)
+    {
+        TileGrid.Columns = Math.Clamp(columns, 2, 16);
+    }
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        ((App)Application.Current).OpenSettings();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    /// <summary>鼠标所在显示器的工作区（多屏下面板弹在用什么屏）。</summary>
+    private (double Left, double Top, double Width, double Height) GetWorkAreaNearCursor()
+    {
+        try
+        {
+            if (GetCursorPos(out var pt))
+            {
+                var monitor = MonitorFromPoint(pt, 2 /* MONITOR_DEFAULTTONEAREST */);
+                var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (GetMonitorInfo(monitor, ref info))
+                {
+                    return (info.rcWork.Left, info.rcWork.Top,
+                        info.rcWork.Right - info.rcWork.Left,
+                        info.rcWork.Bottom - info.rcWork.Top);
+                }
+            }
+        }
+        catch
+        {
+            // 回退主屏工作区
+        }
+        var wa = SystemParameters.WorkArea;
+        return (wa.Left, wa.Top, wa.Width, wa.Height);
+    }
+
+    private bool IsWithinVirtualScreen(double left, double top)
+    {
+        var vl = SystemParameters.VirtualScreenLeft;
+        var vt = SystemParameters.VirtualScreenTop;
+        var vr = vl + SystemParameters.VirtualScreenWidth;
+        var vb = vt + SystemParameters.VirtualScreenHeight;
+        return left >= vl - 20 && top >= vt - 20 && left + Width <= vr + 20 && top + Height <= vb + 20;
     }
 
     // ---------- Win11 视觉 ----------

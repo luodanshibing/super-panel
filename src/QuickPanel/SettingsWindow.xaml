@@ -1,0 +1,88 @@
+<Window x:Class="QuickPanel.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="快捷面板 · 设置"
+        Width="560"
+        SizeToContent="Height"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BgBrush}">
+
+    <StackPanel Margin="22,18">
+
+        <TextBlock Text="外观" Foreground="{DynamicResource AccentBrush}" FontSize="13" />
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="主题模式" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <ComboBox x:Name="ModeBox" Width="130" SelectionChanged="OnModeChanged">
+                    <ComboBoxItem Content="暗色 (dark)" Tag="dark" />
+                    <ComboBoxItem Content="亮色 (light)" Tag="light" />
+                    <ComboBoxItem Content="跟随系统 (auto)" Tag="auto" />
+                </ComboBox>
+            </StackPanel>
+        </Grid>
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="强调色" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1">
+                <WrapPanel x:Name="Swatches" />
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBox x:Name="AccentBox" Width="100" TextChanged="OnAccentTextChanged" />
+                    <TextBlock Text="十六进制，如 #4A9EFF" Foreground="{DynamicResource TextDimBrush}" FontSize="11"
+                               VerticalAlignment="Center" Margin="8,0,0,0" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="每行列数" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+            <TextBox x:Name="ColumnsBox" Width="60" LostFocus="OnColumnsLostFocus" KeyDown="OnColumnsKeyDown" />
+        </Grid>
+
+        <TextBlock Text="热键" Foreground="{DynamicResource AccentBrush}" FontSize="13" Margin="0,16,0,0" />
+        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <TextBox x:Name="HotkeyBox" Width="170" />
+            <Button x:Name="ApplyHotkeyButton" Content="应用热键" Width="84" Margin="10,0,0,0"
+                    Background="{DynamicResource AccentBrush}" Foreground="White"
+                    BorderThickness="0" Click="OnApplyHotkeyClick" />
+            <TextBlock x:Name="HotkeyStatus" Foreground="{DynamicResource TextDimBrush}" FontSize="11"
+                       VerticalAlignment="Center" Margin="10,0,0,0" />
+        </StackPanel>
+        <TextBlock Text="格式：Ctrl+Alt+Space（可用 Ctrl / Alt / Shift / Win + 字母/数字/F1-F12/Space/`）。改完立即生效；注册失败自动回退原热键。"
+                   Foreground="{DynamicResource TextDimBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" />
+
+        <TextBlock Text="行为" Foreground="{DynamicResource AccentBrush}" FontSize="13" Margin="0,16,0,0" />
+        <CheckBox x:Name="AutostartBox" Content="开机自动启动（当前用户）" Foreground="{DynamicResource TextBrush}"
+                  Margin="0,8,0,0" Checked="OnAutostartChanged" Unchecked="OnAutostartChanged" />
+        <CheckBox x:Name="EverythingBox" Content="启用 Everything 全盘搜索（es.exe 通道）" Foreground="{DynamicResource TextBrush}"
+                  Margin="0,6,0,0" Checked="OnEverythingChanged" Unchecked="OnEverythingChanged" />
+        <StackPanel Orientation="Horizontal" Margin="14,6,0,0">
+            <TextBlock Text="全盘结果条数上限" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+            <TextBox x:Name="MaxResultsBox" Width="50" Margin="10,0,0,0" LostFocus="OnMaxResultsLostFocus" />
+        </StackPanel>
+
+        <TextBlock Text="数据目录" Foreground="{DynamicResource AccentBrush}" FontSize="13" Margin="0,16,0,0" />
+        <TextBlock x:Name="DataPathText" Foreground="{DynamicResource TextDimBrush}" FontSize="11"
+                   TextWrapping="Wrap" Margin="0,8,0,0" />
+        <Button x:Name="ChangeDataDirButton" Content="更改数据目录…" Width="130" HorizontalAlignment="Left"
+                Margin="0,8,0,0" Click="OnChangeDataDirClick" />
+        <TextBlock Text="磁贴布局（tiles.json）与图标缓存存这里；指到群晖同步目录即可两台电脑共用一份布局（config.json 永远留在 exe 旁，不同步）。更改后需重启程序生效。"
+                   Foreground="{DynamicResource TextDimBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" />
+
+        <Button Content="关闭" Width="90" Height="28" HorizontalAlignment="Right" Margin="0,18,0,0"
+                Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}"
+                BorderBrush="{DynamicResource BorderBrush}" Click="OnCloseClick" />
+    </StackPanel>
+</Window>

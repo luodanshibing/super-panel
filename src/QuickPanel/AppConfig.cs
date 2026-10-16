@@ -18,6 +18,15 @@ public sealed class AppConfig
     [JsonPropertyName("search")]
     public SearchConfig Search { get; set; } = new();
 
+    [JsonPropertyName("window")]
+    public WindowConfig? Window { get; set; }
+
+    /// <summary>数据目录覆盖（tiles.json + 图标缓存）。留空 = exe 旁 config\；可指向群晖同步目录实现双机共用布局。</summary>
+    [JsonPropertyName("dataDir")]
+    public string DataDir { get; set; } = "";
+
+    private string? _sourcePath;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -32,15 +41,34 @@ public sealed class AppConfig
 
         if (!File.Exists(path))
         {
-            var defaults = new AppConfig();
+            var defaults = new AppConfig { _sourcePath = path };
             File.WriteAllText(path, JsonSerializer.Serialize(defaults, JsonOpts));
             return defaults;
         }
 
         var loaded = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), JsonOpts) ?? new AppConfig();
         loaded.Normalize();
+        loaded._sourcePath = path;
         File.WriteAllText(path, JsonSerializer.Serialize(loaded, JsonOpts)); // 补齐缺失键，用户始终能看到完整 schema
         return loaded;
+    }
+
+    /// <summary>就地保存（记住来源路径后可随时调用）。</summary>
+    public void Save()
+    {
+        if (_sourcePath is null)
+        {
+            return;
+        }
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_sourcePath)!);
+            File.WriteAllText(_sourcePath, JsonSerializer.Serialize(this, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            QuickPanel.Logger.Log($"config save FAILED: {ex.Message}");
+        }
     }
 
     private void Normalize()
@@ -59,7 +87,17 @@ public sealed class AppConfig
         {
             Search.MaxResults = 30;
         }
+        Window ??= new WindowConfig();
     }
+}
+
+public sealed class WindowConfig
+{
+    [JsonPropertyName("left")]
+    public double? Left { get; set; }
+
+    [JsonPropertyName("top")]
+    public double? Top { get; set; }
 }
 
 public sealed class SearchConfig

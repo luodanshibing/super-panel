@@ -89,6 +89,11 @@
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="编辑模式：钉住面板，拖入添加、拖拽排序"
                                 Click="OnEditClick" />
+                        <Button x:Name="SettingsButton"
+                                Content="⚙"
+                                Style="{DynamicResource IconButtonStyle}"
+                                ToolTip="设置（主题 / 热键 / 开机自启 / 数据目录）"
+                                Click="OnSettingsClick" />
                     </StackPanel>
                 </Grid>
             </Border>

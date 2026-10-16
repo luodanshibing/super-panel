@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>QuickPanel</RootNamespace>
     <AssemblyName>QuickPanel</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.3.0</Version>
     <AssemblyTitle>快捷面板</AssemblyTitle>
     <Product>QuickPanel</Product>
   </PropertyGroup>
