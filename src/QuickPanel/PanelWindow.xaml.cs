@@ -362,21 +362,28 @@ public partial class PanelWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var hits = await EverythingSearch.QueryAsync(esPath, q, 150,
-                    new CancellationTokenSource(TimeSpan.FromSeconds(4)).Token);
-                if (usePinyin && hits.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                // 主查询（任意文件）+ exe 专用单词条查询（q.exe，绕开本机链路多词查询失效问题，2026-10-16 实测）
+                var generalTask = EverythingSearch.QueryAsync(esPath, q, 150, cts.Token);
+                var exeTask = EverythingSearch.QueryAsync(esPath, q.Trim() + ".exe", 20, cts.Token);
+                var general = await generalTask;
+                var exeHits = await exeTask;
+                if (usePinyin && general.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
                 {
                     try
                     {
                         var extra = await EverythingSearch.QueryAsync(esPath, "pinyin:" + q, max,
                             new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token);
-                        hits.AddRange(extra.Where(h => !hits.Contains(h, StringComparer.OrdinalIgnoreCase)));
+                        general.AddRange(extra.Where(h => !general.Contains(h, StringComparer.OrdinalIgnoreCase)));
                     }
                     catch
                     {
                         // 拼音补充失败不影响主结果
                     }
                 }
+                var merged = exeHits
+                    .Concat(general.Where(h => !exeHits.Contains(h, StringComparer.OrdinalIgnoreCase)))
+                    .ToList();
                 sw.Stop();
                 _ = Dispatcher.BeginInvoke(() =>
                 {
@@ -384,8 +391,8 @@ public partial class PanelWindow : Window
                     {
                         return; // 已被更新的输入作废
                     }
-                    Logger.Log($"es '{q}' {sw.ElapsedMilliseconds}ms, {hits.Count} hits");
-                    AppendFileRows(hits);
+                    Logger.Log($"es '{q}' {sw.ElapsedMilliseconds}ms, exe {exeHits.Count} + all {general.Count}");
+                    AppendFileRows(merged);
                 });
             }
             catch (OperationCanceledException)
@@ -484,6 +491,10 @@ public partial class PanelWindow : Window
             {
                 continue;
             }
+            if (path.EndsWith(".pf", StringComparison.OrdinalIgnoreCase))
+            {
+                continue; // Windows Prefetch 元数据，启动器无用
+            }
             if (rows.Any(r => r.Target.Equals(path, StringComparison.OrdinalIgnoreCase)))
             {
                 continue; // 与磁贴/程序层去重
@@ -498,10 +509,9 @@ public partial class PanelWindow : Window
             });
         }
 
-        // 程序文件（exe）置顶——多词过滤器语法在本机 Everything 链路不可靠，
-        // 因此单查询多取（150 条）+ 本地排序（2026-10-16 实测决策）
+        // 本地排序（用户拍板优先级：程序文件 > 文件 > 文件夹），显示按 maxResults 截断
         var ordered = candidates
-            .OrderByDescending(r => r.KindText == "程序文件")
+            .OrderBy(RankForUserPriority)
             .Take(_config.Search.MaxResults)
             .ToList();
         if (ordered.Count == 0)
@@ -531,6 +541,14 @@ public partial class PanelWindow : Window
             }
         });
     }
+
+    /// <summary>用户拍板的全盘结果优先级：程序文件 > 文件 > 文件夹。</summary>
+    private static int RankForUserPriority(ResultRow row) => row.KindText switch
+    {
+        "程序文件" => 0,
+        "文件夹" => 2,
+        _ => 1,
+    };
 
     private void MoveSelection(int delta)
     {
