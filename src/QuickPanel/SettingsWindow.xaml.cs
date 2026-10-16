@@ -136,6 +136,90 @@ public partial class SettingsWindow : Window
 
     // ---------- 热键 ----------
 
+    // ---------- 热键录制（点击输入框 → 按下组合键，以实际捕获为准） ----------
+
+    private bool _recordingHotkey;
+
+    private void OnHotkeyBoxMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_recordingHotkey)
+        {
+            return;
+        }
+        _recordingHotkey = true;
+        HotkeyStatus.Text = "";
+        HotkeyBox.Text = "按下组合键（Esc 取消）…";
+    }
+
+    private void OnHotkeyBoxLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_recordingHotkey)
+        {
+            _recordingHotkey = false;
+            HotkeyBox.Text = _config.Hotkey;
+        }
+    }
+
+    private void OnHotkeyPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!_recordingHotkey)
+        {
+            return;
+        }
+        e.Handled = true;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        // 仅修饰键：实时预览
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+        {
+            HotkeyBox.Text = DescribeCombo(Keyboard.Modifiers, null) + "…";
+            return;
+        }
+        if (key == Key.Escape)
+        {
+            _recordingHotkey = false;
+            HotkeyBox.Text = _config.Hotkey;
+            return;
+        }
+        var name = KeyToHotkeyName(key);
+        if (name is null)
+        {
+            HotkeyBox.Text = "不支持该键，请换一个";
+            return;
+        }
+        var isFKey = key >= Key.F1 && key <= Key.F24;
+        if (Keyboard.Modifiers == ModifierKeys.None && !isFKey)
+        {
+            HotkeyBox.Text = "需搭配 Ctrl / Alt / Shift / Win，继续按";
+            return; // 继续录制
+        }
+        HotkeyBox.Text = DescribeCombo(Keyboard.Modifiers, name);
+        _recordingHotkey = false;
+    }
+
+    private static string DescribeCombo(ModifierKeys mods, string? mainKey)
+    {
+        var parts = new List<string>();
+        if (mods.HasFlag(ModifierKeys.Control)) parts.Add("Ctrl");
+        if (mods.HasFlag(ModifierKeys.Alt)) parts.Add("Alt");
+        if (mods.HasFlag(ModifierKeys.Shift)) parts.Add("Shift");
+        if (mods.HasFlag(ModifierKeys.Windows)) parts.Add("Win");
+        if (mainKey is not null) parts.Add(mainKey);
+        return string.Join("+", parts);
+    }
+
+    private static string? KeyToHotkeyName(Key key)
+    {
+        if (key is Key.Space) return "Space";
+        if (key is Key.Oem3) return "`";
+        if (key >= Key.A && key <= Key.Z) return key.ToString();
+        if (key >= Key.D0 && key <= Key.D9) return ((int)(key - Key.D0)).ToString();
+        if (key >= Key.NumPad0 && key <= Key.NumPad9) return ((int)(key - Key.NumPad0)).ToString();
+        if (key >= Key.F1 && key <= Key.F24) return "F" + ((int)(key - Key.F1) + 1);
+        return null; // 其余键（Oem 系列/标点）暂不支持
+    }
+
     private void OnApplyHotkeyClick(object sender, RoutedEventArgs e)
     {
         var combo = HotkeyBox.Text.Trim();

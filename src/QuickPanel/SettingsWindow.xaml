@@ -53,14 +53,18 @@
 
         <TextBlock Text="热键" Foreground="{DynamicResource AccentBrush}" FontSize="13" Margin="0,16,0,0" />
         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-            <TextBox x:Name="HotkeyBox" Width="170" />
+            <TextBox x:Name="HotkeyBox" Width="170" IsReadOnly="True" Cursor="Hand"
+                     ToolTip="点击后直接按下想要的组合键（可含 Win 键）；Esc 取消录制"
+                     PreviewKeyDown="OnHotkeyPreviewKeyDown"
+                     PreviewMouseLeftButtonDown="OnHotkeyBoxMouseDown"
+                     LostFocus="OnHotkeyBoxLostFocus" />
             <Button x:Name="ApplyHotkeyButton" Content="应用热键" Width="84" Margin="10,0,0,0"
                     Background="{DynamicResource AccentBrush}" Foreground="White"
                     BorderThickness="0" Click="OnApplyHotkeyClick" />
             <TextBlock x:Name="HotkeyStatus" Foreground="{DynamicResource TextDimBrush}" FontSize="11"
                        VerticalAlignment="Center" Margin="10,0,0,0" />
         </StackPanel>
-        <TextBlock Text="格式：Ctrl+Alt+Space（可用 Ctrl / Alt / Shift / Win + 字母/数字/F1-F12/Space/`）。改完立即生效；注册失败自动回退原热键。"
+        <TextBlock Text="点击输入框后直接按下组合键（支持 Ctrl / Alt / Shift / Win 任意组合，以实际记录为准，无需手打）；点「应用热键」生效，注册失败自动回退原热键。"
                    Foreground="{DynamicResource TextDimBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" />
 
         <TextBlock Text="行为" Foreground="{DynamicResource AccentBrush}" FontSize="13" Margin="0,16,0,0" />

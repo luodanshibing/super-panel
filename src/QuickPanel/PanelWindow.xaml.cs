@@ -867,31 +867,39 @@ public partial class PanelWindow : Window
         }
         border.ToolTip = missing ? $"目标不存在：{tile.Target}" : tile.Target;
 
-        // 交互：普通模式点击启动 + 支持拖拽排序；编辑模式靠右键菜单
-        if (!_editMode)
+        // 交互：两种模式都可拖拽排序；普通模式点击=启动；编辑模式右键=改名/图标/上移下移/删除
+        border.MouseLeftButtonDown += (_, e) =>
         {
-            border.MouseLeftButtonDown += (_, e) =>
+            _pressedTile = tile;
+            _pressPos = e.GetPosition(this);
+        };
+        border.MouseMove += (_, e) =>
+        {
+            if (_pressedTile != tile || e.LeftButton != MouseButtonState.Pressed)
             {
-                _pressedTile = tile;
-                _pressPos = e.GetPosition(this);
-            };
-            border.MouseMove += (_, e) =>
+                return;
+            }
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _pressPos.X) < 8 && Math.Abs(pos.Y - _pressPos.Y) < 8)
             {
-                if (_pressedTile != tile || e.LeftButton != MouseButtonState.Pressed)
-                {
-                    return;
-                }
-                var pos = e.GetPosition(this);
-                if (Math.Abs(pos.X - _pressPos.X) < 8 && Math.Abs(pos.Y - _pressPos.Y) < 8)
-                {
-                    return;
-                }
-                _dragging = true;
-                _pressedTile = null;
+                return;
+            }
+            _dragging = true;
+            _pressedTile = null;
+            border.Opacity = 0.5; // 拖拽中的视觉反馈
+            try
+            {
                 var data = new DataObject("QuickPanelTileId", tile.Id);
                 DragDrop.DoDragDrop(border, data, DragDropEffects.Move);
+            }
+            finally
+            {
+                border.Opacity = missing ? 0.45 : 1.0;
                 _dragging = false;
-            };
+            }
+        };
+        if (!_editMode)
+        {
             border.MouseLeftButtonUp += (_, _) =>
             {
                 if (!_dragging && _pressedTile == tile)
@@ -901,13 +909,28 @@ public partial class PanelWindow : Window
                 _pressedTile = null;
             };
         }
+        else
+        {
+            border.MouseLeftButtonUp += (_, _) => _pressedTile = null;
+        }
 
         border.AllowDrop = true;
         border.DragOver += (_, e) =>
         {
-            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("QuickPanelTileId")
-                ? DragDropEffects.Copy
-                : DragDropEffects.None;
+            // 效果必须与 DoDragDrop 声明一致：磁贴排序=Move，外部文件=Copy；
+            // 之前写死 Copy 与 Move 不匹配，OLE 会把效果压成 None，Drop 永不触发（2026-10-16 bug）
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.Copy;
+            }
+            else if (e.Data.GetDataPresent("QuickPanelTileId"))
+            {
+                e.Effects = DragDropEffects.Move;
+            }
+            else
+            {
+                e.Effects = DragDropEffects.None;
+            }
             e.Handled = true;
         };
         border.Drop += (_, e) =>
@@ -1052,6 +1075,21 @@ public partial class PanelWindow : Window
         RenderTiles();
     }
 
+    /// <summary>编辑模式右键的上移/下移（不依赖拖拽的确定性排序兜底）。</summary>
+    private void MoveTile(TileItem tile, int delta)
+    {
+        var index = _tiles.IndexOf(tile);
+        var newIndex = index + delta;
+        if (index < 0 || newIndex < 0 || newIndex >= _tiles.Count)
+        {
+            return;
+        }
+        _tiles.RemoveAt(index);
+        _tiles.Insert(newIndex, tile);
+        SaveTiles();
+        RenderTiles();
+    }
+
     private void SaveTiles()
     {
         TilesStore.Save(_tilesPath, _tiles);
@@ -1132,6 +1170,9 @@ public partial class PanelWindow : Window
         }
         else
         {
+            menu.Items.Add(MakeItem("上移", () => MoveTile(tile, -1)));
+            menu.Items.Add(MakeItem("下移", () => MoveTile(tile, +1)));
+            menu.Items.Add(new Separator());
             menu.Items.Add(MakeItem("重命名…", () => RenameTile(tile)));
             menu.Items.Add(MakeItem("更换图标…", () => ChangeIcon(tile)));
             menu.Items.Add(MakeItem("删除", () => DeleteTile(tile)));
