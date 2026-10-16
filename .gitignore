@@ -1,0 +1,11 @@
+## build outputs
+bin/
+obj/
+dist/
+
+## IDE
+.vs/
+*.user
+
+## runtime artifacts
+logs/

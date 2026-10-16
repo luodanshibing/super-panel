@@ -1,75 +1,68 @@
-# 快捷启动面板
+# Super Panel · 快捷启动面板
 
-> 一句话：为个人 Win11 定制的「全局热键呼出 + 等大磁贴网格 + 极速搜索」桌面启动面板。WPF / .NET 8 自研，托盘常驻，单 exe 免安装。
+> 为个人 Win11 定制的「全局热键呼出 + 等大磁贴网格 + 极速搜索」桌面启动面板。C# / .NET 8 / WPF，托盘常驻，单 exe 免安装，免管理员。
 
-## 状态
+![平台](https://img.shields.io/badge/Windows-10%2F11-blue) ![运行时](https://img.shields.io/badge/.NET-8.0--windows-purple) ![许可](https://img.shields.io/badge/License-MIT-green)
 
-**已交付（v0.3.0，P0–P4 完，2026-10-16）**——面板 / 磁贴 / 三层搜索 / 设置 / 自启 / 多屏位置记忆 / 内存治理全部可用，验收实测见下表。功能冻结，后续按需小修。
+## 功能特性
 
-## 功能总览（对照立项 6 条需求）
+- **全局热键呼出**：默认 `Alt+S`（设置内直接按组合键录制），失焦 / Esc / 再按热键 / ✕ 均可隐藏；面板置顶、Win11 原生圆角
+- **磁贴网格**：程序(.exe/.lnk)、文件、文件夹、网址；拖入即添加；拖拽排序；右键改名/换图标/删除；每行列数 2–16 可调；末行自动居中；面板高度贴内容自适应
+- **三层极速搜索**：磁贴（拼音首字母）→ 已装程序（开始菜单索引，拼音首字母）→ Everything 全盘（官方 SDK 进程内直连 70–200ms）；↑↓ 选行、回车打开；结果右键直接固定到面板（.lnk 自动解析程序本体）
+- **设置面板**：明暗主题 + 强调色、列数、热键录制、开机自启、Everything 开关、数据目录迁移（可指向同步盘实现双机共用布局）；点面板外自动关闭
+- **资源克制**：无插件、无动画、事件驱动零轮询；空载 ~61MB、CPU ≈ 0%
 
-| 需求 | 实现 |
-|---|---|
-| 快捷键呼出 | 全局热键（设置窗内直接按组合键录制，当前 `Alt+S`），失焦/Esc/再按热键/✕ 均可隐藏；Win11 原生圆角无边框面板 |
-| 可自定义磁贴 | 程序(.exe/.lnk)/文件/文件夹/网址；资源管理器拖入即添加；右键重命名/更换图标/删除；拖拽排序（普通+编辑模式都可用，编辑模式另有上移/下移） |
-| 搜索快、不限对象 | 三层合并：磁贴（拼音首字母）→ 已装程序（开始菜单索引 180 条，拼音首字母）→ Everything 全盘（官方 SDK 进程内直连 **70–197ms**，es.exe 兜底）；↑↓ 选行、回车/单击打开；结果行右键可直接固定到面板（.lnk 自动解析为程序本体，带参数/工作目录） |
-| 等大磁贴整齐 | 自绘 TilePanel：固定列数单元格拉伸、**末行自动居中**；每行列数 2–16 可调；面板高度贴内容自适应（上限=所在屏工作区），超出滚轮滚动，滚动条隐藏 |
-| 资源小、朴素 | 无插件/无动画/事件驱动；明暗主题 + 8 预设强调色 + 十六进制自定义（强调色可见点 = **磁贴悬停描边** + 编辑模式磁贴边框 + 搜索光标）；隐藏后清结果行 + 强制 GC，内存有界不增长 |
-| Win11 自用 | 免管理员；开机自启（HKCU Run）；多显示器按屏 DPI 定位 + 位置记忆；数据目录可指到群晖同步目录实现双机共用布局 |
+## 安装运行（最终用户）
 
-## 用法速查
+1. 安装 .NET 8 桌面运行时（一次性，约 55MB）：
+   - 官网下载：<https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0>（选「.NET 桌面运行时 8.0.x Windows x64」）
+   - 或命令行：`winget install Microsoft.DotNet.DesktopRuntime.8`
+2. 拷贝 `src\QuickPanel\bin\Release\net8.0-windows\win-x64\publish\` 整个文件夹到任意位置
+3. 双击 `QuickPanel.exe`——托盘出现图标，热键呼出
 
-- **呼出 / 隐藏**：热键 `Alt+S`；或托盘左键；隐藏 = Esc / 点面板外 / ✕ 按钮
-- **搜索**：呼出即聚焦搜索框，输入即搜；Esc 三级退出（清搜索 → 回磁贴 → 关面板）
-- **添加**：从资源管理器拖入；或右上角 ＋（文件/文件夹/网址）；或搜索结果行右键 → 添加到面板
-- **编辑**：右上角 ✎ 或右键空白处进编辑模式（空面板自动进入）；右键磁贴改 名/图标/删除
-- **设置**：右上角 ⚙ 或托盘右键「设置…」——主题/强调色/列数/热键录制/自启/Everything 开关/数据目录；**点设置窗外自动关闭**（改动实时生效，不怕忘关）
-- **磁贴变暗** = 目标路径不存在（程序被卸载或文件被移走）
+**可选**：安装 [Everything](https://www.voidtools.com/zh-cn/)（含服务模式）后自动启用全盘文件搜索；不装则磁贴 + 已装程序两层照常用。
+
+## 从源码构建
+
+- 双击 `build.bat`（需 .NET 8 SDK：`winget install Microsoft.DotNet.SDK.8`）
+- 或命令行：`dotnet publish src\QuickPanel\QuickPanel.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true`
+- 产物：单文件 `QuickPanel.exe`（约 600KB），`tools\` 内自带 Everything SDK/CLI，不碰系统安装
 
 ## 配置参考（exe 旁 `config\`）
 
 | 文件/键 | 说明 |
 |---|---|
-| `config.json` | 主题 mode/accentColor、hotkey、gridColumns、search(everythingEnabled/maxResults)、window 位置记忆、dataDir |
-| `tiles.json` | 磁贴清单（JSON 明文，可备份/放同步盘）；dataDir 指向群晖时迁移此文件 |
-| `icons\` | 图标 PNG 缓存（本机，不进同步盘） |
-| `logs\p0.log` | 热键注册、首帧耗时、posCheck 定位自检、搜索分阶段耗时 |
+| `config.json` | 主题 mode/accentColor、hotkey、gridColumns、search、window 位置、dataDir |
+| `tiles.json` | 磁贴清单（JSON 明文，可备份/放同步盘） |
+| `icons\` | 图标 PNG 缓存（建议留本机） |
+| `logs\p0.log` | 热键注册、首帧耗时、定位自检、搜索分阶段耗时 |
 
-## 性能验收（方案 §4.6 对照，2026-10-16 真机实测，2560×1440@150% 主屏 + 副屏）
+## 性能指标（真机实测，2560×1440@150%）
 
-| 指标 | 目标 | 实测 | 结论 |
-|---|---|---|---|
-| 冷启动 → 面板可见 | ≤ 2s | 0.69s（`--show` 冷启动实测；OS 缓存热时 0.14–0.17s） | ✅ |
-| 热键 → 首帧 | ≤ 100ms | 热态 12–28ms（整晚真机日志中位 ~18ms，最差 86ms）；冷启动后首按 86–166ms（一次性） | ✅ |
-| 空载内存（托盘常驻、面板隐藏） | ≤ 70MB（2026-10-16 修订，原 60MB 为 P0 裸面板预估） | **61.0MB** | ✅ |
-| 用后隐藏内存 | （方案无此条） | ~100–104MB，同实例 3 轮「呼出→搜索→隐藏」压测 103.9 / 99.9 / 104.3，平直不增长 | 有界 |
-| 空载 CPU | ≈ 0% | 0–0.13%（隐藏态 12s 采样，事件驱动无轮询） | ✅ |
-| 面板内过滤首结果 | ≤ 50ms | 磁贴/程序层内存过滤瞬时上屏（120ms 为刻意防抖） | ✅ |
-| Everything 全盘首结果 | ≤ 200ms | SDK 通道 stage1 70–114ms、stage2 153–197ms（150 条全量） | ✅ |
-| 交付物 | 单 exe + config，免管理员 | `QuickPanel.exe` 605KB 单文件 + `config\`；自启走 HKCU | ✅ |
-
-### 内存口径修订说明
-
-60MB 是立项时按"裸面板"的预估（用户确认非硬规定，按实测修订）。交付版额外常驻：开始菜单程序索引（180 条）、拼音首字母表（26,171 字资源）、Everything SDK、设置窗。实测构成：空载隐藏 61MB；首次显示后 WPF 渲染栈初始化（D3D 设备/着色器/字形缓存）**一次性**常驻 +25MB（窗口隐藏不释放，WPF 固有行为）；日常使用稳定在 ~100–104MB 且压测不增长（同实例 3 轮压测平直）。现行口径：**空载隐藏 ≤70MB；用后隐藏有界不增长（参考线 ~110MB）**。治理手段保留：隐藏时清空搜索结果行与图标 + 延迟 1.5s 强制 GC（Forced 双轮夹终结器 + LOH 压缩；Optimized 模式实测会跳过 gen2）。
+| 指标 | 数值 |
+|---|---|
+| 热键 → 面板首帧 | 热态 12–28ms |
+| 冷启动 → 面板可见 | 0.69s |
+| 全盘搜索（Everything SDK） | 70–200ms |
+| 空载内存（隐藏态） | ~61MB；用后有界 ~100MB（隐藏自动清结果 + 强制 GC） |
+| 空载 CPU | ≈ 0% |
 
 ## 已知限制
 
-- 全盘**拼音首字母**搜索需 Everything 1.5a（`pinyin:` 修饰符）或 IbEverythingExt 插件——涉及动用户已装软件，拍板不动；本地层（磁贴/程序）拼音首字母不受影响
-- 本机 es.exe 链路多词查询异常（SDK 通道不受影响，已绕开）；es.exe 仅作 SDK 失败时的兜底
-- 管理员边界：非管理员面板收管理员资源管理器的拖放会被 Windows 拒绝（UIPI），右键手动加即可
-- 拖出面板删除未做（右键删除覆盖该需求）；命令类型磁贴、多页未做（自适应高度+滚动已覆盖）
+- 全盘**拼音首字母**搜索需 Everything 1.5a 或 IbEverythingExt 插件；本地层不受影响
+- Everything 为可选依赖，版本检测自动降级（SDK → es.exe → 禁用全盘层）
+- 非管理员面板收管理员资源管理器的拖放会被 Windows 拒绝（UIPI），右键手动添加即可
 
-## 开发
+## 目录结构
 
-- 构建：`dotnet build src\QuickPanel -c Release`
-- 发布：`dotnet publish src\QuickPanel -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true`
-- 自检：`QuickPanel.exe --show`（冷启动呼出一次，posCheck 记录 DPI/位置/激活态/首帧耗时）
-- 运行依赖：.NET 8 桌面运行时 + Everything（全盘层；本机 1.4 服务模式）
-- 随应用分发：`tools\Everything64.dll`（官方 SDK，91KB）、`tools\es.exe`（官方 CLI，262KB），不碰用户 Everything 安装
+```
+src\QuickPanel\    C# WPF 源码（.cs 逻辑 + .xaml 界面）
+  assets\          图标与拼音首字母资源
+  tools\           Everything SDK (Everything64.dll) 与 CLI (es.exe)
+outputs\           立项方案、开发踩坑实录等文档
+build.bat          双击构建
+```
 
-## 备注
+## License
 
-- 方案与调研正文：`outputs\快捷启动面板-调研与方案-2026-10-15-2121.md`
-- 热键演变：Ctrl+Win+Space（被系统占用）→ Ctrl+Alt+Space（P0 终选）→ Alt+S（用户设置窗录制，P3.13 修复切换失灵后稳定使用）
-- 依赖：Hardcodet.NotifyIcon.Wpf 2.0.1（托盘）
-- 开发踩坑实录（本项目内的 WPF/Win32/Everything 集成经验，18 条）：`outputs\WPF桌面小工具开发踩坑合集-2026-10-16-1828.md`
+[MIT](LICENSE)
