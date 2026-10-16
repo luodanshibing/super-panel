@@ -468,6 +468,7 @@ public partial class PanelWindow : Window
 
     private void RenderResultRows()
     {
+        Height = 480; // 结果列表视图用标准高度（磁贴视图的高度随内容变）
         TileViewHost.Visibility = Visibility.Collapsed;
         ResultList.Visibility = Visibility.Visible;
         EditHint.Visibility = Visibility.Collapsed;
@@ -782,6 +783,8 @@ public partial class PanelWindow : Window
             TileGrid.Children.Add(BuildTile(tile));
         }
 
+        UpdatePanelSizeForTiles();
+
         if (_tiles.Count == 0)
         {
             EmptyHint.Text = _editMode
@@ -793,6 +796,18 @@ public partial class PanelWindow : Window
         {
             EmptyHint.Visibility = Visibility.Collapsed;
         }
+    }
+
+    /// <summary>磁贴视图：面板高度随内容增长（上限 = 鼠标所在屏工作区），超出后滚动；结果列表视图恢复标准 480。</summary>
+    private void UpdatePanelSizeForTiles()
+    {
+        var columns = Math.Clamp(_config.GridColumns, 2, 16);
+        var rows = Math.Max(1, (int)Math.Ceiling(_tiles.Count / (double)columns));
+        const double tileRowHeight = 80 + 12; // TileBorderStyle Height 80 + Margin 6×2
+        const double topBar = 52, scrollMargin = 16;
+        var wanted = topBar + scrollMargin + rows * tileRowHeight;
+        var maxHeight = GetWorkAreaNearCursor().DipHeight - 48;
+        Height = Math.Clamp(wanted, 240, Math.Max(240, maxHeight));
     }
 
     private Border BuildTile(TileItem tile)
