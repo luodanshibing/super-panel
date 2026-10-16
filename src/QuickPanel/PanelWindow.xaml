@@ -89,15 +89,19 @@
                     </Border>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
                         <Button x:Name="AddButton"
-                                Content="＋"
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="添加磁贴（文件 / 文件夹 / 网址）"
-                                Click="OnAddClick" />
+                                Click="OnAddClick">
+                            <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       Text="&#xE710;" FontSize="14" />
+                        </Button>
                         <Button x:Name="EditButton"
-                                Content="✎"
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="编辑模式：钉住面板，拖入添加、拖拽排序"
-                                Click="OnEditClick" />
+                                Click="OnEditClick">
+                            <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       Text="&#xE70F;" FontSize="14" />
+                        </Button>
                         <Button x:Name="SettingsButton"
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="设置（主题 / 热键 / 开机自启 / 数据目录）"
@@ -106,10 +110,12 @@
                                        Text="&#xE713;" FontSize="14" />
                         </Button>
                         <Button x:Name="CloseButton"
-                                Content="✕"
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="关闭面板 (Esc)"
-                                Click="OnCloseClick" />
+                                Click="OnCloseClick">
+                            <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       Text="&#xE711;" FontSize="14" />
+                        </Button>
                     </StackPanel>
                 </Grid>
             </Border>
