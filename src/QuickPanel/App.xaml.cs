@@ -105,6 +105,9 @@ public partial class App : Application
         var configDir = Path.Combine(AppContext.BaseDirectory, "config");
         var dataDir = string.IsNullOrWhiteSpace(_config.DataDir) ? configDir : _config.DataDir;
         _settings = new SettingsWindow(_config, Path.Combine(dataDir, "tiles.json"), Path.Combine(dataDir, "icons"));
+        _settings.Closed += (_, _) => EndSuppress();
+        BeginSuppress(); // 设置窗打开期间面板不因失焦隐藏（2026-10-16：点⚙面板消失且设置窗被盖住的观感问题）
+        Logger.Log("settings opened");
         _settings.Show();
     }
 
