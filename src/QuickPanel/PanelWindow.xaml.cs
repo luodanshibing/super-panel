@@ -48,7 +48,7 @@ public partial class PanelWindow : Window
     {
         InitializeComponent();
         _config = config;
-        TileGrid.Columns = Math.Clamp(config.GridColumns, 2, 16);
+        TileGrid.FixedColumns = Math.Clamp(config.GridColumns, 2, 16);
 
         var configDir = Path.Combine(AppContext.BaseDirectory, "config");
         var dataDir = string.IsNullOrWhiteSpace(config.DataDir) ? configDir : config.DataDir;
@@ -1393,7 +1393,7 @@ public partial class PanelWindow : Window
 
     public void UpdateColumns(int columns)
     {
-        TileGrid.Columns = Math.Clamp(columns, 2, 16);
+        TileGrid.FixedColumns = Math.Clamp(columns, 2, 16);
     }
 
     [DllImport("user32.dll")]

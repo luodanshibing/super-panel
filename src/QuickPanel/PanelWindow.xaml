@@ -1,6 +1,7 @@
 <Window x:Class="QuickPanel.PanelWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:QuickPanel"
         Title="快捷面板"
         Width="720" Height="480"
         WindowStyle="None"
@@ -114,7 +115,7 @@
                               HorizontalScrollBarVisibility="Disabled"
                               HorizontalContentAlignment="Left"
                               VerticalContentAlignment="Top">
-                    <UniformGrid x:Name="TileGrid" Columns="8" VerticalAlignment="Top" />
+                    <local:TilePanel x:Name="TileGrid" VerticalAlignment="Top" />
                 </ScrollViewer>
 
                 <ListBox x:Name="ResultList"
