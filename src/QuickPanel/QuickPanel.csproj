@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <None Include="tools\es.exe" Condition="Exists('tools\es.exe')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="tools\Everything64.dll" Condition="Exists('tools\Everything64.dll')" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

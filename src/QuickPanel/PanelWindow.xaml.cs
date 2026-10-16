@@ -68,6 +68,7 @@ public partial class PanelWindow : Window
 
         _esPath = EverythingSearch.LocateEs(_config);
         _esVersion = _esPath is null ? null : EverythingSearch.DetectEverythingVersion(_esPath);
+        EverythingSearch.EnsureSdk();
         Logger.Log($"es.exe: {_esPath ?? "未找到（全盘搜索禁用）"}; Everything 版本: {_esVersion?.ToString() ?? "未知"}");
 
         _programs.RebuildAsync(n => Logger.Log($"program index built: {n} entries"));
@@ -371,8 +372,7 @@ public partial class PanelWindow : Window
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 
                 // 阶段 1：exe 专用单词条（q.exe）
-                var exeHits = await EverythingSearch.QueryAsync(esPath, q.Trim() + ".exe", 20,
-                    new CancellationTokenSource(TimeSpan.FromSeconds(8)).Token);
+                var exeHits = await EverythingSearch.QueryFastAsync(esPath, q.Trim() + ".exe", 20);
                 _ = Dispatcher.BeginInvoke(() =>
                 {
                     if (seq != _searchSeq)
@@ -384,14 +384,12 @@ public partial class PanelWindow : Window
                 });
 
                 // 阶段 2：主查询 + 拼音补充
-                var general = await EverythingSearch.QueryAsync(esPath, q, 150,
-                    new CancellationTokenSource(TimeSpan.FromSeconds(8)).Token);
+                var general = await EverythingSearch.QueryFastAsync(esPath, q, 150);
                 if (usePinyin && general.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
                 {
                     try
                     {
-                        var extra = await EverythingSearch.QueryAsync(esPath, "pinyin:" + q, max,
-                            new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token);
+                        var extra = await EverythingSearch.QueryFastAsync(esPath, "pinyin:" + q, max);
                         general.AddRange(extra.Where(h => !general.Contains(h, StringComparer.OrdinalIgnoreCase)));
                     }
                     catch
