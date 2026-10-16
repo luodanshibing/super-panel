@@ -74,6 +74,9 @@ public partial class PanelWindow : Window
         _programs.RebuildAsync(n => Logger.Log($"program index built: {n} entries"));
 
         SourceInitialized += (_, _) => ApplyWin11WindowPolish();
+        // 诊断（2026-10-16 面板关不掉排查）：原生激活/失活事件直接落日志（只挂一次）
+        Activated += (_, _) => Logger.Log("panel ACTIVATED");
+        Deactivated += (_, _) => Logger.Log("panel DEACTIVATED (raw)");
         BuildGridMenu();
         RenderTiles();
         UpdateEditUi();
@@ -279,10 +282,14 @@ public partial class PanelWindow : Window
                 _visibilityWatch?.Stop();
                 return;
             }
-            if (!IsActive && !ShouldStayVisible())
+            // 用 Win32 真前台判定，不信 WPF 的 IsActive：设置窗关闭时 WPF 做"同应用激活接力"
+            // 把面板标记为 Activated，但面板并未真正成为前台，此后永远收不到 DEACTIVATE——
+            // IsActive 卡死 true，失焦隐藏与旧巡检全部失效（2026-10-16「点设置→点外面板关不掉」实撞）。
+            var realActive = GetForegroundWindow() == new WindowInteropHelper(this).Handle;
+            if (!realActive && !ShouldStayVisible())
             {
                 _visibilityWatch?.Stop();
-                Logger.Log("visibility watch: panel visible but inactive → hide");
+                Logger.Log("visibility watch: panel not real-foreground → hide");
                 _lastAutoHide = DateTime.Now;
                 HidePanel();
             }
