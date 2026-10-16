@@ -362,8 +362,8 @@ public partial class PanelWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var hits = await EverythingSearch.QueryAsync(esPath, q, max,
-                    new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token);
+                var hits = await EverythingSearch.QueryAsync(esPath, q, 150,
+                    new CancellationTokenSource(TimeSpan.FromSeconds(4)).Token);
                 if (usePinyin && hits.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
                 {
                     try
@@ -473,13 +473,14 @@ public partial class PanelWindow : Window
         {
             return;
         }
-        var added = new List<ResultRow>();
+        var candidates = new List<ResultRow>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var raw in hits)
         {
             var isDir = raw.EndsWith("\\") || Directory.Exists(raw);
             var path = raw.TrimEnd('\\');
             var name = Path.GetFileName(path);
-            if (name.Length == 0)
+            if (name.Length == 0 || !seen.Add(path))
             {
                 continue;
             }
@@ -487,21 +488,31 @@ public partial class PanelWindow : Window
             {
                 continue; // 与磁贴/程序层去重
             }
-            var row = new ResultRow
+            var isExe = path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+            candidates.Add(new ResultRow
             {
                 Title = name,
                 Subtitle = Path.GetDirectoryName(path) ?? path,
-                KindText = isDir ? "文件夹" : "文件",
+                KindText = isExe ? "程序文件" : isDir ? "文件夹" : "文件",
                 Target = path,
-            };
-            rows.Add(row);
-            added.Add(row);
+            });
         }
-        if (added.Count == 0)
+
+        // 程序文件（exe）置顶——多词过滤器语法在本机 Everything 链路不可靠，
+        // 因此单查询多取（150 条）+ 本地排序（2026-10-16 实测决策）
+        var ordered = candidates
+            .OrderByDescending(r => r.KindText == "程序文件")
+            .Take(_config.Search.MaxResults)
+            .ToList();
+        if (ordered.Count == 0)
         {
             return;
         }
         var selectedIndex = ResultList.SelectedIndex;
+        foreach (var row in ordered)
+        {
+            rows.Add(row);
+        }
         ResultList.ItemsSource = null;
         ResultList.ItemsSource = rows;
         ResultList.SelectedIndex = selectedIndex >= 0 ? Math.Min(selectedIndex, rows.Count - 1) : (rows.Count > 0 ? 0 : -1);
@@ -509,7 +520,7 @@ public partial class PanelWindow : Window
         // 图标后台提取（每行 ~1ms，不卡 UI）
         _ = Task.Run(() =>
         {
-            foreach (var row in added)
+            foreach (var row in ordered)
             {
                 var icon = IconExtractor.Extract(row.Target);
                 if (icon is not null)
@@ -565,23 +576,66 @@ public partial class PanelWindow : Window
         ResultList.ContextMenu = menu;
     }
 
-    /// <summary>把搜索到的程序/文件/文件夹固定成磁贴（用户 2026-10-16 需求）。</summary>
+    /// <summary>把搜索到的程序/文件/文件夹固定成磁贴（用户 2026-10-16 需求）。
+    /// 固定 .lnk 时自动解析出真实程序文件（连同参数与工作目录），面板上放的是本体不是快捷方式。</summary>
     private void AddTileFromRow(ResultRow row)
     {
-        if (_tiles.Any(t => t.Target.Equals(row.Target, StringComparison.OrdinalIgnoreCase)))
+        var target = row.Target;
+        var args = "";
+        var workDir = "";
+        if (Path.GetExtension(target).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = ResolveLnk(target);
+            if (resolved is not null && (File.Exists(resolved.Value.Target) || Directory.Exists(resolved.Value.Target)))
+            {
+                target = resolved.Value.Target;
+                args = resolved.Value.Arguments;
+                workDir = resolved.Value.WorkDir;
+                Logger.Log($"lnk resolved: {row.Target} -> {target}");
+            }
+        }
+        if (_tiles.Any(t => t.Target.Equals(target, StringComparison.OrdinalIgnoreCase)))
         {
             FlashHint("已在面板中：" + row.Title);
             return;
         }
-        var ext = Path.GetExtension(row.Target).ToLowerInvariant();
-        var type = Directory.Exists(row.Target) ? "folder"
+        var ext = Path.GetExtension(target).ToLowerInvariant();
+        var type = Directory.Exists(target) ? "folder"
             : ext is ".lnk" or ".exe" ? "app"
             : "file";
-        _tiles.Add(new TileItem { Type = type, Label = row.Title, Target = row.Target });
+        _tiles.Add(new TileItem { Type = type, Label = row.Title, Target = target, Arguments = args, WorkDir = workDir });
         SaveTiles();
         RenderTiles();
-        Logger.Log($"tile added from search: {row.Target}");
+        Logger.Log($"tile added from search: {target}");
         FlashHint("已添加到面板：" + row.Title);
+    }
+
+    /// <summary>解析 .lnk 快捷方式的真实目标（WScript.Shell COM，免 P/Invoke）。</summary>
+    private static (string Target, string Arguments, string WorkDir)? ResolveLnk(string lnkPath)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null)
+            {
+                return null;
+            }
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            var shortcut = shell.CreateShortcut(lnkPath);
+            string target = (string)shortcut.TargetPath;
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return null;
+            }
+            string arguments = (string)shortcut.Arguments;
+            string workingDir = (string)shortcut.WorkingDirectory;
+            return (target, arguments, workingDir);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"lnk resolve FAILED: {lnkPath} - {ex.Message}");
+            return null;
+        }
     }
 
     private void RemoveTile(TileItem tile)
