@@ -95,19 +95,20 @@ public partial class PanelWindow : Window
             _programs.RebuildAsync(n => Logger.Log($"program index rebuilt: {n} entries"));
         }
 
-        // 位置：优先恢复上次位置（有效性检查防拔掉显示器后飘出屏幕）；否则弹在鼠标所在屏幕
-        var (waL, waT, waW, waH) = GetWorkAreaNearCursor();
+        // 位置：用户拖动过（placed）→ 恢复上次位置；否则弹在鼠标所在屏幕的默认位
+        var area = GetWorkAreaNearCursor();
         var savedLeft = _config.Window?.Left;
         var savedTop = _config.Window?.Top;
-        if (savedLeft.HasValue && savedTop.HasValue && IsWithinVirtualScreen(savedLeft.Value, savedTop.Value))
+        if (_config.Window?.Placed == true && savedLeft.HasValue && savedTop.HasValue &&
+            IsWithinVirtualScreen(savedLeft.Value, savedTop.Value))
         {
             Left = savedLeft.Value;
             Top = savedTop.Value;
         }
         else
         {
-            Left = waL + (waW - Width) / 2;
-            Top = waT + (waH - Height) / 3;
+            Left = area.DipLeft + (area.DipWidth - Width) / 2;
+            Top = area.DipTop + (area.DipHeight - Height) / 3;
         }
 
         _showSw.Restart();
@@ -116,11 +117,25 @@ public partial class PanelWindow : Window
         Activate();
         SearchBox.Focus();
 
-        // 渲染一帧完成后记录耗时：热键→可见的实测值进日志
+        // 渲染一帧完成后记录耗时与位置自检（DPI 定位验证）：热键→可见的实测值进日志
         Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
         {
             _showSw.Stop();
             Logger.Log($"panel show = {_showSw.ElapsedMilliseconds}ms（含热键触发到首帧）");
+            try
+            {
+                var hwnd = new WindowInteropHelper(this).Handle;
+                if (GetWindowRect(hwnd, out var r))
+                {
+                    Logger.Log(
+                        $"posCheck: dpi={area.DpiX:F0} workPhys=({area.PhysLeft},{area.PhysTop})-({area.PhysRight},{area.PhysBottom}) " +
+                        $"winPhys=({r.Left},{r.Top})-({r.Right},{r.Bottom})");
+                }
+            }
+            catch
+            {
+                // 自检日志失败无碍
+            }
         });
     }
 
@@ -1046,6 +1061,12 @@ public partial class PanelWindow : Window
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
     {
@@ -1071,8 +1092,13 @@ public partial class PanelWindow : Window
         public uint dwFlags;
     }
 
-    /// <summary>鼠标所在显示器的工作区（多屏下面板弹在用什么屏）。</summary>
-    private (double Left, double Top, double Width, double Height) GetWorkAreaNearCursor()
+    /// <summary>
+    /// 鼠标所在显示器的工作区（多屏下面板弹在用什么屏）。
+    /// 返回 DIP（WPF Left/Top 的单位）与物理像素两套值 + 该屏 DPI：物理值必须除以缩放比，
+    /// 否则 125%/150% 缩放屏上面板会整体偏右下（2026-10-16 位置错误 bug 的根因）。
+    /// </summary>
+    private (double DipLeft, double DipTop, double DipWidth, double DipHeight,
+        int PhysLeft, int PhysTop, int PhysRight, int PhysBottom, double DpiX) GetWorkAreaNearCursor()
     {
         try
         {
@@ -1082,9 +1108,24 @@ public partial class PanelWindow : Window
                 var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
                 if (GetMonitorInfo(monitor, ref info))
                 {
-                    return (info.rcWork.Left, info.rcWork.Top,
-                        info.rcWork.Right - info.rcWork.Left,
-                        info.rcWork.Bottom - info.rcWork.Top);
+                    double dpiX = 96;
+                    try
+                    {
+                        if (GetDpiForMonitor(monitor, 0 /* MDT_EFFECTIVE_DPI */, out var dx, out _) == 0)
+                        {
+                            dpiX = dx;
+                        }
+                    }
+                    catch
+                    {
+                        // shcore 不可用回退 96
+                    }
+                    var scale = dpiX / 96.0;
+                    var workW = info.rcWork.Right - info.rcWork.Left;
+                    var workH = info.rcWork.Bottom - info.rcWork.Top;
+                    return (
+                        info.rcWork.Left / scale, info.rcWork.Top / scale, workW / scale, workH / scale,
+                        info.rcWork.Left, info.rcWork.Top, info.rcWork.Right, info.rcWork.Bottom, dpiX);
                 }
             }
         }
@@ -1093,7 +1134,7 @@ public partial class PanelWindow : Window
             // 回退主屏工作区
         }
         var wa = SystemParameters.WorkArea;
-        return (wa.Left, wa.Top, wa.Width, wa.Height);
+        return (wa.Left, wa.Top, wa.Width, wa.Height, 0, 0, 0, 0, 96);
     }
 
     private bool IsWithinVirtualScreen(double left, double top)
@@ -1103,6 +1144,30 @@ public partial class PanelWindow : Window
         var vr = vl + SystemParameters.VirtualScreenWidth;
         var vb = vt + SystemParameters.VirtualScreenHeight;
         return left >= vl - 20 && top >= vt - 20 && left + Width <= vr + 20 && top + Height <= vb + 20;
+    }
+
+    /// <summary>按住顶栏空白处拖动面板；拖完记位置并标记 placed（之后每次弹在这里）。</summary>
+    private void OnTopBarMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // 点到搜索框/按钮时不拖动
+        if (e.OriginalSource is System.Windows.Controls.TextBox or System.Windows.Controls.Button)
+        {
+            return;
+        }
+        if (e.ButtonState == MouseButtonState.Pressed)
+        {
+            try
+            {
+                DragMove();
+                _config.Window = new WindowConfig { Left = Left, Top = Top, Placed = true };
+                _config.Save();
+                Logger.Log($"panel moved to ({Left:F0},{Top:F0}), placed=true");
+            }
+            catch
+            {
+                // DragMove 偶发异常（如非按下状态）忽略
+            }
+        }
     }
 
     // ---------- Win11 视觉 ----------

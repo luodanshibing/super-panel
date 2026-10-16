@@ -57,11 +57,13 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- 顶部：搜索框 + 操作按钮 -->
-            <Border Grid.Row="0"
+            <!-- 顶部：搜索框 + 操作按钮（按住空白处可拖动面板） -->
+            <Border x:Name="TopBar"
+                    Grid.Row="0"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="0,0,0,1">
+                    BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="OnTopBarMouseDown">
                 <Grid Margin="18,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

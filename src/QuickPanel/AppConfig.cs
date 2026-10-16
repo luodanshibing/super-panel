@@ -98,6 +98,10 @@ public sealed class WindowConfig
 
     [JsonPropertyName("top")]
     public double? Top { get; set; }
+
+    /// <summary>用户拖动过面板才置 true；未拖过 = 每次弹在鼠标所在屏的默认位（修正 2026-10-16 位置错误后自愈旧数据）。</summary>
+    [JsonPropertyName("placed")]
+    public bool Placed { get; set; }
 }
 
 public sealed class SearchConfig

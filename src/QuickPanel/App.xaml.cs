@@ -56,6 +56,12 @@ public partial class App : Application
             _tray.ShowBalloonTip("快捷面板", $"热键 {_config.Hotkey} 注册失败，可能被其他程序占用。可编辑 config\\config.json 换热键后重启。", BalloonIcon.Warning);
         }
         _hotkey.Pressed += () => Dispatcher.BeginInvoke(() => _panel?.ToggleShow());
+
+        // 自检入口：QuickPanel.exe --show 启动后自动呼出一次（用于定位/性能的数值验证）
+        if (e.Args.Any(a => string.Equals(a, "--show", StringComparison.OrdinalIgnoreCase)))
+        {
+            Dispatcher.BeginInvoke(() => _panel?.ToggleShow());
+        }
     }
 
     private TaskbarIcon CreateTray()
