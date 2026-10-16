@@ -10,6 +10,7 @@
         Topmost="True"
         Background="{DynamicResource BgBrush}"
         AllowDrop="True"
+        PreviewDragEnter="OnWindowDragEnter"
         DragOver="OnWindowDragOver"
         DragLeave="OnWindowDragLeave"
         Drop="OnWindowDrop"
@@ -96,6 +97,11 @@
                                 Style="{DynamicResource IconButtonStyle}"
                                 ToolTip="设置（主题 / 热键 / 开机自启 / 数据目录）"
                                 Click="OnSettingsClick" />
+                        <Button x:Name="CloseButton"
+                                Content="✕"
+                                Style="{DynamicResource IconButtonStyle}"
+                                ToolTip="关闭面板 (Esc)"
+                                Click="OnCloseClick" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -116,6 +122,7 @@
                          Margin="4,6"
                          ItemTemplate="{StaticResource ResultRowTemplate}"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ContextMenuOpening="OnResultContextMenuOpening"
                          PreviewMouseLeftButtonUp="OnResultClick">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">

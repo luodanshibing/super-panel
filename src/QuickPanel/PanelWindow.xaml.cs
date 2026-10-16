@@ -114,8 +114,9 @@ public partial class PanelWindow : Window
         _showSw.Restart();
         SearchBox.Clear(); // 每次呼出都清空上次搜索，避免残留过滤状态（用户 2026-10-15 反馈）
         Show();
-        Activate();
+        EnsureForeground(); // Activate() 可能被前台锁静默拒绝；未激活则失焦隐藏永远不触发（2026-10-16 bug）
         SearchBox.Focus();
+        StartVisibilityWatch();
 
         // 渲染一帧完成后记录耗时与位置自检（DPI 定位验证）：热键→可见的实测值进日志
         Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
@@ -129,7 +130,7 @@ public partial class PanelWindow : Window
                 {
                     Logger.Log(
                         $"posCheck: dpi={area.DpiX:F0} workPhys=({area.PhysLeft},{area.PhysTop})-({area.PhysRight},{area.PhysBottom}) " +
-                        $"winPhys=({r.Left},{r.Top})-({r.Right},{r.Bottom})");
+                        $"winPhys=({r.Left},{r.Top})-({r.Right},{r.Bottom}) active={GetForegroundWindow() == hwnd}");
                 }
             }
             catch
@@ -142,13 +143,43 @@ public partial class PanelWindow : Window
     private void OnDeactivated(object sender, EventArgs e)
     {
         // 这些情况下必须保持面板可见：编辑模式（拖入添加的前提）、
-        // 本面板的右键菜单 / 对话框打开中、有拖拽悬在面板上
-        if (_editMode || _suppressHide > 0 || _dragActive)
+        // 本面板的右键菜单 / 模态对话框打开中、有拖拽悬在面板上
+        if (ShouldStayVisible())
         {
+            Logger.Log("deactivated but staying visible (edit/menu/dialog/drag)");
             return;
         }
         _lastAutoHide = DateTime.Now;
         HidePanel();
+    }
+
+    /// <summary>失焦隐藏的放行判断：查实际状态而非计数器，杜绝"抑制卡死"。</summary>
+    private bool ShouldStayVisible()
+    {
+        if (_editMode)
+        {
+            return true;
+        }
+        if (_suppressHide > 0)
+        {
+            return true; // 模态对话框（PromptDialog / 文件对话框）打开中
+        }
+        if (_dragActive)
+        {
+            return true; // 拖拽悬停中（10s 到期保护，见 OnWindowDragEnter）
+        }
+        if (ContextMenu?.IsOpen == true || ResultList.ContextMenu?.IsOpen == true)
+        {
+            return true;
+        }
+        foreach (var border in TileGrid.Children.OfType<Border>())
+        {
+            if (border.ContextMenu?.IsOpen == true)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -194,6 +225,65 @@ public partial class PanelWindow : Window
 
     private void BeginSuppress() => _suppressHide++;
     private void EndSuppress() => _suppressHide = Math.Max(0, _suppressHide - 1);
+
+    // ---------- 前台激活与可见性兜底 ----------
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
+
+    private DispatcherTimer? _visibilityWatch;
+
+    /// <summary>
+    /// 强制把面板带到前台。Activate() 会被 Windows 前台锁静默拒绝——面板从未激活时，
+    /// "点外面"不会产生 Deactivated 事件，失焦隐藏就永远不触发（2026-10-16 实测 bug）。
+    /// 惯用解法：先按一次 Alt 解锁，再 SetForegroundWindow。
+    /// </summary>
+    private void EnsureForeground()
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (GetForegroundWindow() != hwnd)
+            {
+                keybd_event(0x12, 0, 0, IntPtr.Zero); // ALT down：解除前台锁
+                SetForegroundWindow(hwnd);
+                keybd_event(0x12, 0, 2, IntPtr.Zero); // ALT up
+            }
+        }
+        catch
+        {
+            // 失败还有巡检兜底
+        }
+    }
+
+    /// <summary>兜底巡检：可见但未激活且无抑制理由 → 隐藏。任何"卡住不消失"的保险丝。</summary>
+    private void StartVisibilityWatch()
+    {
+        _visibilityWatch?.Stop();
+        _visibilityWatch = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _visibilityWatch.Tick += (_, _) =>
+        {
+            if (!IsVisible)
+            {
+                _visibilityWatch?.Stop();
+                return;
+            }
+            if (!IsActive && !ShouldStayVisible())
+            {
+                _visibilityWatch?.Stop();
+                Logger.Log("visibility watch: panel visible but inactive → hide");
+                _lastAutoHide = DateTime.Now;
+                HidePanel();
+            }
+        };
+        _visibilityWatch.Start();
+    }
 
     // ---------- 搜索（P2 核心） ----------
 
@@ -443,6 +533,92 @@ public partial class PanelWindow : Window
         if (idx >= count) idx = count - 1;
         ResultList.SelectedIndex = idx;
         ResultList.ScrollIntoView(ResultList.SelectedItem);
+    }
+
+    // ---------- 结果行右键：添加到面板 / 打开 / 打开所在位置 ----------
+
+    private void OnResultContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        var source = e.OriginalSource as DependencyObject;
+        var item = ItemsControl.ContainerFromElement(ResultList, source) as ListBoxItem;
+        if (item?.Content is not ResultRow row)
+        {
+            ResultList.ContextMenu = null;
+            return;
+        }
+
+        var menu = new ContextMenu();
+        if (row.Tile is null)
+        {
+            menu.Items.Add(MakeItem("添加到面板", () => AddTileFromRow(row)));
+            menu.Items.Add(MakeItem("打开", () => OpenRow(row)));
+            if (File.Exists(row.Target) || Directory.Exists(row.Target))
+            {
+                menu.Items.Add(MakeItem("打开所在位置", () => RevealInExplorer(row.Target)));
+            }
+        }
+        else
+        {
+            menu.Items.Add(MakeItem("打开", () => OpenRow(row)));
+            menu.Items.Add(MakeItem("从面板移除", () => RemoveTile(row.Tile)));
+        }
+        ResultList.ContextMenu = menu;
+    }
+
+    /// <summary>把搜索到的程序/文件/文件夹固定成磁贴（用户 2026-10-16 需求）。</summary>
+    private void AddTileFromRow(ResultRow row)
+    {
+        if (_tiles.Any(t => t.Target.Equals(row.Target, StringComparison.OrdinalIgnoreCase)))
+        {
+            FlashHint("已在面板中：" + row.Title);
+            return;
+        }
+        var ext = Path.GetExtension(row.Target).ToLowerInvariant();
+        var type = Directory.Exists(row.Target) ? "folder"
+            : ext is ".lnk" or ".exe" ? "app"
+            : "file";
+        _tiles.Add(new TileItem { Type = type, Label = row.Title, Target = row.Target });
+        SaveTiles();
+        RenderTiles();
+        Logger.Log($"tile added from search: {row.Target}");
+        FlashHint("已添加到面板：" + row.Title);
+    }
+
+    private void RemoveTile(TileItem tile)
+    {
+        _tiles.Remove(tile);
+        SaveTiles();
+        RenderTiles();
+    }
+
+    private void RevealInExplorer(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            HidePanel();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"reveal FAILED: {path} - {ex.Message}");
+        }
+    }
+
+    private DispatcherTimer? _hintTimer;
+
+    /// <summary>轻提示：底部闪现一条文字，2.5s 后恢复。</summary>
+    private void FlashHint(string text)
+    {
+        EditHint.Text = text;
+        EditHint.Visibility = Visibility.Visible;
+        _hintTimer?.Stop();
+        _hintTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _hintTimer.Tick += (_, _) =>
+        {
+            _hintTimer?.Stop();
+            UpdateEditUi();
+        };
+        _hintTimer.Start();
     }
 
     private void OpenSelected()
@@ -796,15 +972,45 @@ public partial class PanelWindow : Window
         e.Handled = true;
     }
 
-    private void OnWindowDragLeave(object sender, DragEventArgs e) => _dragActive = false;
+    private void OnWindowDragLeave(object sender, DragEventArgs e)
+    {
+        _dragActive = false;
+        _dragExpire?.Stop();
+    }
 
     private void OnWindowDrop(object sender, DragEventArgs e)
     {
         _dragActive = false;
+        _dragExpire?.Stop();
         if (e.Data.GetDataPresent(DataFormats.FileDrop))
         {
             AddFromFiles((string[])e.Data.GetData(DataFormats.FileDrop)!);
         }
+    }
+
+    private DispatcherTimer? _dragExpire;
+
+    /// <summary>拖拽悬停期间不失焦隐藏；10s 到期保护防止 DragLeave 丢失导致永久钉住。</summary>
+    private void OnWindowDragEnter(object sender, DragEventArgs e)
+    {
+        _dragActive = true;
+        _dragExpire?.Stop();
+        _dragExpire = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _dragExpire.Tick += (_, _) =>
+        {
+            _dragExpire?.Stop();
+            _dragActive = false;
+        };
+        _dragExpire.Start();
+    }
+
+    // ---------- 顶栏按钮 ----------
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => HidePanel();
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        ((App)Application.Current).OpenSettings();
     }
 
     // ---------- 右键菜单 ----------
@@ -817,7 +1023,6 @@ public partial class PanelWindow : Window
         menu.Items.Add(MakeItem("添加网址…", AddUrl));
         menu.Items.Add(new Separator());
         menu.Items.Add(MakeItem(EditMenuText(), ToggleEditMode));
-        WireMenuLifetime(menu);
         _gridMenu = menu;
         ContextMenu = menu; // 面板空白处右键
     }
@@ -839,17 +1044,10 @@ public partial class PanelWindow : Window
             menu.Items.Add(new Separator());
             menu.Items.Add(MakeItem("退出编辑模式", ToggleEditMode));
         }
-        WireMenuLifetime(menu);
         return menu;
     }
 
-    /// <summary>菜单弹出会抢走窗口焦点；不抑制的话失焦隐藏会把菜单和面板一起杀掉。</summary>
-    private void WireMenuLifetime(ContextMenu menu)
-    {
-        menu.Opened += (_, _) => BeginSuppress();
-        menu.Closed += (_, _) => EndSuppress();
-    }
-
+    /// <summary>菜单弹出会抢走窗口焦点：现在由 ShouldStayVisible 直接查 IsOpen，这里不再需要计数器。</summary>
     private static MenuItem MakeItem(string header, Action action)
     {
         var item = new MenuItem { Header = header };
@@ -1020,6 +1218,7 @@ public partial class PanelWindow : Window
     /// <summary>统一隐藏出口：记位置 → 隐藏 → 作废未决搜索 → 延迟 GC 压回闲置内存。</summary>
     private void HidePanel()
     {
+        _visibilityWatch?.Stop();
         if (!IsVisible)
         {
             return;
@@ -1045,11 +1244,6 @@ public partial class PanelWindow : Window
     public void UpdateColumns(int columns)
     {
         TileGrid.Columns = Math.Clamp(columns, 2, 16);
-    }
-
-    private void OnSettingsClick(object sender, RoutedEventArgs e)
-    {
-        ((App)Application.Current).OpenSettings();
     }
 
     [DllImport("user32.dll")]
