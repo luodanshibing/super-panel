@@ -579,17 +579,25 @@ public partial class PanelWindow : Window
     }
 
     // ---------- 结果行右键：添加到面板 / 打开 / 打开所在位置 ----------
+    // 不用 ContextMenuOpening（继承链解析时机有竞争，偶发弹出窗口级菜单），改为右键抬起时手动弹菜单。
 
-    private void OnResultContextMenuOpening(object sender, ContextMenuEventArgs e)
+    private void OnResultRightClick(object sender, MouseButtonEventArgs e)
     {
-        var source = e.OriginalSource as DependencyObject;
-        var item = ItemsControl.ContainerFromElement(ResultList, source) as ListBoxItem;
+        var item = ItemsControl.ContainerFromElement(ResultList, e.OriginalSource as DependencyObject) as ListBoxItem;
         if (item?.Content is not ResultRow row)
         {
-            ResultList.ContextMenu = null;
-            return;
+            return; // 空白处不弹行菜单
         }
+        e.Handled = true;
+        var menu = BuildRowMenu(row);
+        ResultList.ContextMenu = menu; // 供 ShouldStayVisible 的 IsOpen 检查
+        menu.PlacementTarget = ResultList;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
 
+    private ContextMenu BuildRowMenu(ResultRow row)
+    {
         var menu = new ContextMenu();
         if (row.Tile is null)
         {
@@ -605,7 +613,7 @@ public partial class PanelWindow : Window
             menu.Items.Add(MakeItem("打开", () => OpenRow(row)));
             menu.Items.Add(MakeItem("从面板移除", () => RemoveTile(row.Tile)));
         }
-        ResultList.ContextMenu = menu;
+        return menu;
     }
 
     /// <summary>把搜索到的程序/文件/文件夹固定成磁贴（用户 2026-10-16 需求）。
