@@ -103,7 +103,7 @@ public partial class App : Application
     {
         try
         {
-            return BitmapFrame.Create(new Uri("pack://application:,,,/assets/icon.png", UriKind.Absolute));
+            return BitmapFrame.Create(new Uri("pack://application:,,,/assets/app.ico", UriKind.Absolute));
         }
         catch
         {

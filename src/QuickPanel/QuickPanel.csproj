@@ -11,6 +11,7 @@
     <Version>0.3.0</Version>
     <AssemblyTitle>快捷面板</AssemblyTitle>
     <Product>QuickPanel</Product>
+    <ApplicationIcon>assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="assets\icon.png" Condition="Exists('assets\icon.png')" />
+    <Resource Include="assets\app.ico" />
     <Resource Include="assets\pinyin-initials.txt" Condition="Exists('assets\pinyin-initials.txt')" />
   </ItemGroup>
 

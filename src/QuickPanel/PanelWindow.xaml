@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:QuickPanel"
         Title="快捷面板"
+        Icon="assets/app.ico"
         Width="720" Height="480"
         WindowStyle="None"
         ResizeMode="NoResize"
