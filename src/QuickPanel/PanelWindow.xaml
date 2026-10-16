@@ -111,7 +111,9 @@
                 <ScrollViewer x:Name="TileViewHost"
                               Margin="8"
                               VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled">
+                              HorizontalScrollBarVisibility="Disabled"
+                              HorizontalContentAlignment="Left"
+                              VerticalContentAlignment="Top">
                     <UniformGrid x:Name="TileGrid" Columns="8" />
                 </ScrollViewer>
 
