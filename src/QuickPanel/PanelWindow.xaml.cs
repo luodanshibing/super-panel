@@ -40,6 +40,10 @@ public partial class PanelWindow : Window
     private Version? _esVersion;
     private readonly Dictionary<string, string> _tileInitials = new();
 
+    // 搜索结果两段维护：头部行（磁贴+程序，每次搜索重建）+ 文件行（Everything 追加，按用户优先级排序）
+    private List<ResultRow> _headRows = new();
+    private List<ResultRow> _fileRows = new();
+
     public PanelWindow(AppConfig config)
     {
         InitializeComponent();
@@ -347,9 +351,12 @@ public partial class PanelWindow : Window
             }
         }
 
-        RenderResultRows(rows);
+        _headRows = rows;
+        _fileRows = new List<ResultRow>();
+        RenderResultRows();
 
-        // ③ 全盘层（Everything，异步、防抖后补充上屏）
+        // ③ 全盘层（Everything，异步）：两阶段串行——exe 专用查询先发先上屏（用户优先级最高），
+        //    主查询随后。并行会让两个 es.exe 在 Everything 的 IPC 上互相排队（实测 3.2s，比串行更慢）。
         if (_esPath is null || !_config.Search.EverythingEnabled)
         {
             return;
@@ -362,12 +369,23 @@ public partial class PanelWindow : Window
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-                // 主查询（任意文件）+ exe 专用单词条查询（q.exe，绕开本机链路多词查询失效问题，2026-10-16 实测）
-                var generalTask = EverythingSearch.QueryAsync(esPath, q, 150, cts.Token);
-                var exeTask = EverythingSearch.QueryAsync(esPath, q.Trim() + ".exe", 20, cts.Token);
-                var general = await generalTask;
-                var exeHits = await exeTask;
+
+                // 阶段 1：exe 专用单词条（q.exe）
+                var exeHits = await EverythingSearch.QueryAsync(esPath, q.Trim() + ".exe", 20,
+                    new CancellationTokenSource(TimeSpan.FromSeconds(8)).Token);
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (seq != _searchSeq)
+                    {
+                        return;
+                    }
+                    Logger.Log($"es '{q}' stage1 exe={exeHits.Count} ({sw.ElapsedMilliseconds}ms)");
+                    AppendFileRows(exeHits);
+                });
+
+                // 阶段 2：主查询 + 拼音补充
+                var general = await EverythingSearch.QueryAsync(esPath, q, 150,
+                    new CancellationTokenSource(TimeSpan.FromSeconds(8)).Token);
                 if (usePinyin && general.Count < 8 && q.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9'))
                 {
                     try
@@ -381,9 +399,6 @@ public partial class PanelWindow : Window
                         // 拼音补充失败不影响主结果
                     }
                 }
-                var merged = exeHits
-                    .Concat(general.Where(h => !exeHits.Contains(h, StringComparer.OrdinalIgnoreCase)))
-                    .ToList();
                 sw.Stop();
                 _ = Dispatcher.BeginInvoke(() =>
                 {
@@ -391,13 +406,13 @@ public partial class PanelWindow : Window
                     {
                         return; // 已被更新的输入作废
                     }
-                    Logger.Log($"es '{q}' {sw.ElapsedMilliseconds}ms, exe {exeHits.Count} + all {general.Count}");
-                    AppendFileRows(merged);
+                    Logger.Log($"es '{q}' stage2 all={general.Count} ({sw.ElapsedMilliseconds}ms)");
+                    AppendFileRows(general);
                 });
             }
             catch (OperationCanceledException)
             {
-                // 超时/取消，静默
+                Logger.Log($"es '{q}' cancelled or timeout");
             }
             catch (Exception ex)
             {
@@ -453,15 +468,16 @@ public partial class PanelWindow : Window
         return null;
     }
 
-    private void RenderResultRows(List<ResultRow> rows)
+    private void RenderResultRows()
     {
         TileViewHost.Visibility = Visibility.Collapsed;
         ResultList.Visibility = Visibility.Visible;
         EditHint.Visibility = Visibility.Collapsed;
-        ResultList.ItemsSource = rows;
-        ResultList.SelectedIndex = rows.Count > 0 ? 0 : -1;
+        ResultList.ItemsSource = _headRows.Concat(_fileRows).ToList();
+        var all = ResultList.Items;
+        ResultList.SelectedIndex = all.Count > 0 ? 0 : -1;
 
-        if (rows.Count == 0)
+        if (all.Count == 0)
         {
             EmptyHint.Text = _esPath is null
                 ? "无匹配（未找到 es.exe，全盘搜索不可用）"
@@ -476,10 +492,6 @@ public partial class PanelWindow : Window
 
     private void AppendFileRows(List<string> hits)
     {
-        if (ResultList.ItemsSource is not List<ResultRow> rows)
-        {
-            return;
-        }
         var candidates = new List<ResultRow>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var raw in hits)
@@ -495,9 +507,10 @@ public partial class PanelWindow : Window
             {
                 continue; // Windows Prefetch 元数据，启动器无用
             }
-            if (rows.Any(r => r.Target.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            if (_headRows.Any(r => r.Target.Equals(path, StringComparison.OrdinalIgnoreCase)) ||
+                _fileRows.Any(r => r.Target.Equals(path, StringComparison.OrdinalIgnoreCase)))
             {
-                continue; // 与磁贴/程序层去重
+                continue; // 与磁贴/程序层/已入列文件去重
             }
             var isExe = path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
             candidates.Add(new ResultRow
@@ -508,29 +521,32 @@ public partial class PanelWindow : Window
                 Target = path,
             });
         }
-
-        // 本地排序（用户拍板优先级：程序文件 > 文件 > 文件夹），显示按 maxResults 截断
-        var ordered = candidates
-            .OrderBy(RankForUserPriority)
-            .Take(_config.Search.MaxResults)
-            .ToList();
-        if (ordered.Count == 0)
+        if (candidates.Count == 0)
         {
             return;
         }
-        var selectedIndex = ResultList.SelectedIndex;
-        foreach (var row in ordered)
-        {
-            rows.Add(row);
-        }
-        ResultList.ItemsSource = null;
-        ResultList.ItemsSource = rows;
-        ResultList.SelectedIndex = selectedIndex >= 0 ? Math.Min(selectedIndex, rows.Count - 1) : (rows.Count > 0 ? 0 : -1);
 
-        // 图标后台提取（每行 ~1ms，不卡 UI）
+        // 本地排序（用户拍板优先级：程序文件 > 文件 > 文件夹），显示按 maxResults 截断
+        _fileRows = _fileRows
+            .Concat(candidates)
+            .OrderBy(RankForUserPriority)
+            .Take(_config.Search.MaxResults)
+            .ToList();
+
+        var selectedIndex = ResultList.SelectedIndex;
+        ResultList.ItemsSource = null;
+        ResultList.ItemsSource = _headRows.Concat(_fileRows).ToList();
+        ResultList.SelectedIndex = selectedIndex >= 0 ? Math.Min(selectedIndex, ResultList.Items.Count - 1) : 0;
+        if (ResultList.SelectedItem is not null)
+        {
+            ResultList.ScrollIntoView(ResultList.SelectedItem);
+        }
+
+        // 图标后台提取（仅缺图标的行，每行 ~1ms，不卡 UI）
+        var needIcons = _fileRows.Where(r => r.Icon is null).Take(40).ToList();
         _ = Task.Run(() =>
         {
-            foreach (var row in ordered)
+            foreach (var row in needIcons)
             {
                 var icon = IconExtractor.Extract(row.Target);
                 if (icon is not null)
