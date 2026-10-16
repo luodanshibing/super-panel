@@ -228,8 +228,8 @@ public partial class PanelWindow : Window
         }
     }
 
-    private void BeginSuppress() => _suppressHide++;
-    private void EndSuppress() => _suppressHide = Math.Max(0, _suppressHide - 1);
+    internal void BeginSuppress() => _suppressHide++;
+    internal void EndSuppress() => _suppressHide = Math.Max(0, _suppressHide - 1);
 
     // ---------- 前台激活与可见性兜底 ----------
 
@@ -1378,12 +1378,29 @@ public partial class PanelWindow : Window
         _config.Save();
         Hide();
         _searchSeq++;
+
+        // 释放搜索结果行与图标：面板是 Hide 不是 Close，结果行留在视觉树里 GC 收不走，
+        // 私有内存随使用持续上涨（2026-10-16 实测隐藏态 104.9MB > 60MB 验收线）。
+        // 清空并回磁贴视图 = 下次呼出即磁贴态，1.5s 后的延迟 GC 才真正能回收位图。
+        _headRows.Clear();
+        _fileRows.Clear();
+        ResultList.ItemsSource = null;
+        ShowTileView();
+
         _ = Task.Run(async () =>
         {
             try
             {
                 await Task.Delay(1500);
-                GC.Collect(2, GCCollectionMode.Optimized, false);
+                // Forced 而非 Optimized：Optimized 在 gen2 场景会"判断不值得收"而直接跳过，
+                // 实测隐藏态 PM 停在 107MB 不回落（2026-10-16）。强制收两轮夹一次终结器，
+                // 让位图的原生释放路径（finalizer）走完；LOH 压缩把搜索批次的空段还给 OS。
+                // 后台线程执行，不卡 UI。
+                System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
+                    System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(2, GCCollectionMode.Forced, true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, true);
             }
             catch
             {
