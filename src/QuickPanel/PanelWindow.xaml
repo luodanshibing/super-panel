@@ -111,7 +111,7 @@
             <Grid Grid.Row="1" Background="Transparent">
                 <ScrollViewer x:Name="TileViewHost"
                               Margin="8"
-                              VerticalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Hidden"
                               HorizontalScrollBarVisibility="Disabled"
                               HorizontalContentAlignment="Left"
                               VerticalContentAlignment="Top">

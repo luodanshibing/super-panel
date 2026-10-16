@@ -798,16 +798,17 @@ public partial class PanelWindow : Window
         }
     }
 
-    /// <summary>磁贴视图：面板高度随内容增长（上限 = 鼠标所在屏工作区），超出后滚动；结果列表视图恢复标准 480。</summary>
+    /// <summary>磁贴视图：面板高度贴着内容走（磁贴视图隐藏滚动条，超出屏幕上限用滚轮滚）；
+    /// +8px 余量防临界像素触发滚动条；结果列表视图恢复标准 480。</summary>
     private void UpdatePanelSizeForTiles()
     {
         var columns = Math.Clamp(_config.GridColumns, 2, 16);
         var rows = Math.Max(1, (int)Math.Ceiling(_tiles.Count / (double)columns));
         const double tileRowHeight = 80 + 12; // TileBorderStyle Height 80 + Margin 6×2
         const double topBar = 52, scrollMargin = 16;
-        var wanted = topBar + scrollMargin + rows * tileRowHeight;
+        var wanted = topBar + scrollMargin + rows * tileRowHeight + 8;
         var maxHeight = GetWorkAreaNearCursor().DipHeight - 48;
-        Height = Math.Clamp(wanted, 240, Math.Max(240, maxHeight));
+        Height = Math.Clamp(wanted, 160, Math.Max(160, maxHeight));
     }
 
     private Border BuildTile(TileItem tile)
