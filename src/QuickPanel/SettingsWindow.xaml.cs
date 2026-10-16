@@ -25,6 +25,7 @@ public partial class SettingsWindow : Window
     private readonly string _tilesPath;
     private readonly string _iconsDir;
     private bool _loading;
+    private bool _modalOpen;
 
     public SettingsWindow(AppConfig config, string tilesPath, string iconsDir)
     {
@@ -33,6 +34,17 @@ public partial class SettingsWindow : Window
         _tilesPath = tilesPath;
         _iconsDir = iconsDir;
         _loading = true;
+
+        // 失活自动关闭（用户 2026-10-16：忘记关设置窗，被别的窗口挡住还以为出 bug）。
+        // 保留 Topmost：面板本身 Topmost，设置窗必须在其上，否则一打开就被面板盖住。
+        // _modalOpen 守卫：MessageBox / 选目录对话框期间失活不算"点了别处"。
+        Deactivated += (_, _) =>
+        {
+            if (!_modalOpen)
+            {
+                Close();
+            }
+        };
 
         // 外观
         var mode = (config.Theme.Mode ?? "dark").ToLowerInvariant();
@@ -275,7 +287,9 @@ public partial class SettingsWindow : Window
         catch (Exception ex)
         {
             Logger.Log($"autostart set FAILED: {ex.Message}");
-            MessageBox.Show(this, $"写入开机启动失败：{ex.Message}", "快捷面板");
+            _modalOpen = true;
+            try { MessageBox.Show(this, $"写入开机启动失败：{ex.Message}", "快捷面板"); }
+            finally { _modalOpen = false; }
             _loading = true;
             AutostartBox.IsChecked = GetAutostart(); // 回读真实状态
             _loading = false;
@@ -312,7 +326,11 @@ public partial class SettingsWindow : Window
     private void OnChangeDataDirClick(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFolderDialog { Title = "选择数据目录（建议：群晖同步目录下的专用文件夹）" };
-        if (dlg.ShowDialog(this) != true)
+        _modalOpen = true;
+        bool picked;
+        try { picked = dlg.ShowDialog(this) == true; }
+        finally { _modalOpen = false; }
+        if (!picked)
         {
             return;
         }
@@ -342,7 +360,9 @@ public partial class SettingsWindow : Window
         catch (Exception ex)
         {
             Logger.Log($"dataDir change FAILED: {ex.Message}");
-            MessageBox.Show(this, $"迁移数据失败：{ex.Message}", "快捷面板");
+            _modalOpen = true;
+            try { MessageBox.Show(this, $"迁移数据失败：{ex.Message}", "快捷面板"); }
+            finally { _modalOpen = false; }
         }
     }
 

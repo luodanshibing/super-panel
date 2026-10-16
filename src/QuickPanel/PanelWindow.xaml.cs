@@ -820,6 +820,12 @@ public partial class PanelWindow : Window
             border.BorderBrush = (Brush)FindResource("AccentBrush");
             border.BorderThickness = new Thickness(2);
         }
+        else
+        {
+            // 悬停轻微高亮 = 强调色描边（用户 2026-10-16 拍板：强调色用在这里，日常可见）
+            border.MouseEnter += (_, _) => border.BorderBrush = (Brush)FindResource("AccentBrush");
+            border.MouseLeave += (_, _) => border.BorderBrush = (Brush)FindResource("BorderBrush");
+        }
 
         var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
 
