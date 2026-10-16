@@ -76,8 +76,10 @@
                             Background="{DynamicResource BgBrush}"
                             BorderBrush="{DynamicResource BorderBrush}"
                             BorderThickness="1"
-                            CornerRadius="7"
-                            Height="34"
+                            CornerRadius="15"
+                            Height="30"
+                            Width="440"
+                            HorizontalAlignment="Left"
                             VerticalAlignment="Center"
                             Margin="0,0,14,0">
                         <TextBox x:Name="SearchBox"
