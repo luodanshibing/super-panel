@@ -26,6 +26,7 @@ public partial class SettingsWindow : Window
     private readonly string _iconsDir;
     private bool _loading;
     private bool _modalOpen;
+    private bool _closing;
 
     public SettingsWindow(AppConfig config, string tilesPath, string iconsDir)
     {
@@ -37,14 +38,28 @@ public partial class SettingsWindow : Window
 
         // 失活自动关闭（用户 2026-10-16：忘记关设置窗，被别的窗口挡住还以为出 bug）。
         // 保留 Topmost：面板本身 Topmost，设置窗必须在其上，否则一打开就被面板盖住。
-        // _modalOpen 守卫：MessageBox / 选目录对话框期间失活不算"点了别处"。
+        // 守卫三层：_modalOpen（MessageBox/选目录期间失活不算"点了别处"）；_closing
+        // （关闭流程中再收到 WM_ACTIVATE 会再次触发 Deactivated，对关闭中的窗口调
+        // Close() 会抛 InvalidOperationException 直接弄死进程——2026-10-16 实撞，
+        // 事件日志 18:52 两次崩溃都在这条路径）；try/catch 兜底。
         Deactivated += (_, _) =>
         {
-            if (!_modalOpen)
+            if (_modalOpen || _closing)
+            {
+                return;
+            }
+            _closing = true;
+            try
             {
                 Close();
             }
+            catch
+            {
+                // 已在关闭流程中，忽略
+            }
         };
+        // 手动关闭（✕ 按钮 / Alt+F4）同样要置位：关闭流程中的 WM_ACTIVATE 会再触发 Deactivated
+        Closing += (_, _) => _closing = true;
 
         // 外观
         var mode = (config.Theme.Mode ?? "dark").ToLowerInvariant();

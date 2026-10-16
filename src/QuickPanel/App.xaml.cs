@@ -34,6 +34,22 @@ public partial class App : Application
         Logger.Init(Path.Combine(AppContext.BaseDirectory, "logs"));
         Logger.Log("---- session start ----");
 
+        // 全局异常网：托盘常驻应用绝不能因单次异常静默死亡（2026-10-16 实撞：
+        // SettingsWindow 对关闭中窗口重复 Close 抛异常，整进程消失，用户以为"卡死"）。
+        // UI 线程异常记日志后吞掉保活；非 UI / Task 异常吞不住，但必须留下法医记录。
+        DispatcherUnhandledException += (_, e) =>
+        {
+            Logger.Log($"UI UNHANDLED: {e.Exception.GetType().Name}: {e.Exception.Message}\n{e.Exception.StackTrace}");
+            e.Handled = true;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            Logger.Log($"NON-UI UNHANDLED: {e.ExceptionObject}");
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Logger.Log($"UNOBSERVED TASK: {e.Exception}");
+            e.SetObserved();
+        };
+
         _config = AppConfig.LoadOrCreate(Path.Combine(AppContext.BaseDirectory, "config"));
         Logger.Log($"config: mode={_config.Theme.Mode} accent={_config.Theme.AccentColor} hotkey={_config.Hotkey} columns={_config.GridColumns}");
 
