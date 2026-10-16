@@ -22,6 +22,8 @@ public sealed class HotkeyManager : IDisposable
     private HwndSource? _source;
     private bool _registered;
 
+    public bool IsRegistered => _registered;
+
     public event Action? Pressed;
 
     public bool Register(string combo)

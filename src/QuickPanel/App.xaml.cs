@@ -44,18 +44,12 @@ public partial class App : Application
 
         _tray = CreateTray();
 
-        _hotkey = new HotkeyManager();
-        var ok = _hotkey.Register(_config.Hotkey);
-        if (ok)
-        {
-            Logger.Log($"hotkey registered OK: {_config.Hotkey}");
-        }
-        else
+        TryRegisterHotkey(_config.Hotkey);
+        if (_hotkey is null || !_hotkey.IsRegistered)
         {
             Logger.Log($"hotkey register FAILED: {_config.Hotkey}（可能被其他程序占用）");
             _tray.ShowBalloonTip("快捷面板", $"热键 {_config.Hotkey} 注册失败，可能被其他程序占用。可编辑 config\\config.json 换热键后重启。", BalloonIcon.Warning);
         }
-        _hotkey.Pressed += () => Dispatcher.BeginInvoke(() => _panel?.ToggleShow());
 
         // 自检入口：QuickPanel.exe --show 启动后自动呼出一次（用于定位/性能的数值验证）
         if (e.Args.Any(a => string.Equals(a, "--show", StringComparison.OrdinalIgnoreCase)))
@@ -114,6 +108,30 @@ public partial class App : Application
         _settings.Show();
     }
 
+    /// <summary>注册热键并接好响应链（Press → 面板显隐）。切换热键必须走这里，否则新热键"注册了却没人响应"。</summary>
+    private bool TryRegisterHotkey(string combo)
+    {
+        try
+        {
+            HotkeyManager.ParseCombo(combo);
+        }
+        catch
+        {
+            Logger.Log($"hotkey combo invalid: {combo}");
+            return false;
+        }
+        _hotkey?.Dispose();
+        _hotkey = new HotkeyManager();
+        if (!_hotkey.Register(combo))
+        {
+            Logger.Log($"hotkey register FAILED: {combo}");
+            return false;
+        }
+        _hotkey.Pressed += () => Dispatcher.BeginInvoke(() => _panel?.ToggleShow());
+        Logger.Log($"hotkey registered OK: {combo}");
+        return true;
+    }
+
     internal bool ChangeHotkey(string combo)
     {
         try
@@ -124,16 +142,14 @@ public partial class App : Application
         {
             return false; // 格式不合法
         }
-        _hotkey?.Dispose();
-        _hotkey = new HotkeyManager();
-        if (_hotkey.Register(combo))
+        if (TryRegisterHotkey(combo))
         {
             _config.Hotkey = combo;
             _config.Save();
             Logger.Log($"hotkey changed to: {combo}");
             return true;
         }
-        _hotkey.Register(_config.Hotkey); // 回退原热键
+        TryRegisterHotkey(_config.Hotkey); // 回退原热键
         Logger.Log($"hotkey change FAILED ({combo}), reverted to {_config.Hotkey}");
         return false;
     }
