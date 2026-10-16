@@ -302,7 +302,6 @@ public partial class PanelWindow : Window
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
     {
         var text = SearchBox.Text.Trim();
-        SearchPlaceholder.Opacity = string.IsNullOrEmpty(text) ? 1 : 0;
         _searchTimer.Stop();
         if (string.IsNullOrEmpty(text))
         {
